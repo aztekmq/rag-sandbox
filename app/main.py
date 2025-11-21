@@ -1,4 +1,13 @@
-"""Gradio application exposing admin and user interfaces."""
+"""Gradio application exposing admin and user interfaces.
+
+This module builds a responsive, role-aware Gradio interface styled with an
+Apple-inspired aesthetic. It embraces verbose logging and comprehensive
+documentation to comply with international programming standards while making
+it easy to debug user journeys through the RAG workspace. Distinct landing
+experiences exist for general users (chat-focused) and administrators (document
+operations), with frictionless transitions between login, workspace, and logout
+states.
+"""
 
 from __future__ import annotations
 
@@ -17,14 +26,32 @@ from app.rag_chain import delete_document, get_documents_list, ingest_pdfs, quer
 logger = logging.getLogger(__name__)
 
 
-def login(username: str, password: str, role: str) -> Tuple[gr.update, gr.update, str]:
-    """Authenticate user and toggle interface visibility."""
+def login(
+    username: str,
+    password: str,
+    role: str,
+) -> Tuple[gr.update, gr.update, str, str, str]:
+    """Authenticate user and toggle interface visibility.
+
+    The function preserves explicit logging to trace authentication outcomes and
+    primes downstream components with the detected role and display name so that
+    both user and administrator dashboards render the correct controls.
+    """
 
     if authenticate(username, password, role):
-        logger.info("User %s logged in as %s", username, role)
-        return gr.update(visible=False), gr.update(visible=True, value=f"Logged in as {role.capitalize()}"), ""
-    logger.warning("Failed login attempt for user %s", username)
-    return gr.update(visible=True), gr.update(visible=False), "Wrong credentials!"
+        safe_username = username or role.title()
+        logger.info("User %s logged in as %s", safe_username, role)
+        role_banner = f"Logged in as {role.capitalize()} — welcome, {safe_username}."
+        return (
+            gr.update(visible=False),
+            gr.update(visible=True),
+            role_banner,
+            role,
+            safe_username,
+        )
+
+    logger.warning("Failed login attempt for user %s", username or "<blank>")
+    return gr.update(visible=True), gr.update(visible=False), "Wrong credentials!", "", ""
 
 
 def upload_and_index(files: list[gr.File] | None) -> str:
@@ -41,12 +68,36 @@ def upload_and_index(files: list[gr.File] | None) -> str:
     return ingest_pdfs()
 
 
-def show_admin_controls(role_str: str):
-    """Reveal admin-only widgets when applicable."""
+def _render_library_overview(documents: list[str]) -> str:
+    """Render a simple, human-readable library overview for administrators."""
 
-    is_admin = "admin" in role_str.lower()
+    if not documents:
+        return "No documents ingested yet. Upload PDFs to build your knowledge base."
+
+    entries = "\n".join([f"• {name}" for name in documents])
+    return f"**{len(documents)} active documents**\n\n{entries}"
+
+
+def show_admin_controls(role_str: str):
+    """Reveal admin-only widgets when applicable.
+
+    This function centralizes the toggling logic for administrator-specific
+    controls. It also refreshes the document library so the admin landing page
+    immediately reflects the current RAG corpus.
+    """
+
+    is_admin = "admin" in (role_str or "").lower()
+    documents = refresh_documents() if is_admin else []
     logger.debug("Setting admin control visibility: %s", is_admin)
-    return [gr.update(visible=is_admin) for _ in range(4)]
+    overview_text = _render_library_overview(documents)
+    return [
+        gr.update(visible=is_admin),
+        gr.update(visible=is_admin),
+        gr.update(visible=is_admin),
+        gr.update(visible=is_admin, choices=documents),
+        gr.update(visible=is_admin),
+        gr.update(visible=is_admin, value=overview_text),
+    ]
 
 
 def refresh_documents() -> list[str]:
@@ -68,10 +119,26 @@ def handle_delete(doc: str) -> str:
 def respond(message: str, history: list[list[str]], role_str: str):
     """Generate a response using the RAG engine."""
 
-    logger.info("Received query: %s", message)
+    logger.info("Received query from %s role: %s", role_str or "unknown", message)
     answer = query_rag(message)
     history.append((message, answer))
     return "", history
+
+
+def logout(role_str: str) -> tuple[gr.update, gr.update, gr.update, str, gr.update, gr.update]:
+    """Return to the landing page and clear transient state."""
+
+    logger.info("Logout requested for role: %s", role_str or "unknown")
+    cleared_chat = gr.update(value=[])
+    cleared_docs = gr.update(choices=[], value=None)
+    return (
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(value="", visible=False),
+        "",
+        cleared_chat,
+        cleared_docs,
+    )
 
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
@@ -152,47 +219,109 @@ def build_ui() -> gr.Blocks:
         title="IBM MQ RAG Sandbox",
         css=(ASSETS_DIR / "custom.css").read_text() if (ASSETS_DIR / "custom.css").exists() else None,
     ) as demo:
-        gr.Markdown("# IBM MQ Knowledge Base (Local RAG)")
+        role_state = gr.State("")
+        user_state = gr.State("")
 
-        with gr.Column(visible=True) as login_box:
-            gr.Markdown("### Login")
-            role = gr.Radio(["user", "admin"], label="Login as", value="user")
-            user = gr.Textbox(label="Username")
-            pwd = gr.Textbox(label="Password", type="password")
-            login_btn = gr.Button("Login")
+        gr.Markdown(
+            """
+            # IBM MQ Knowledge Base
+            Experience a streamlined, Apple-inspired interface for chatting with and curating your localized knowledge base.
+            """,
+            elem_classes=["page-title"],
+        )
 
-        status = gr.Markdown(visible=False)
+        with gr.Column(visible=True, elem_classes=["card", "login-card"]) as login_box:
+            gr.Markdown(
+                """
+                ### Sign in
+                Choose your role to access either the chat experience (user) or the document operations hub (admin).
+                """,
+                elem_classes=["card-title"],
+            )
+            role = gr.Radio(["user", "admin"], label="Login as", value="user", elem_classes=["pill-input"])
+            user = gr.Textbox(label="Username", placeholder="your.name", elem_classes=["text-input"])
+            pwd = gr.Textbox(label="Password", type="password", placeholder="••••••••", elem_classes=["text-input"])
+            login_btn = gr.Button("Enter Workspace", elem_classes=["primary-btn"])
 
-        with gr.Column(visible=False) as main_interface:
-            with gr.Row():
-                with gr.Column(scale=1):
-                    gr.Markdown("### Admin Panel")
-                    file_upload = gr.File(label="Upload IBM MQ PDFs", file_count="multiple", visible=False)
-                    index_btn = gr.Button("Re-index all PDFs", visible=False)
-                    doc_list = gr.Dropdown(choices=[], label="Documents", visible=False)
-                    delete_btn = gr.Button("Delete selected", visible=False)
+        status = gr.Markdown(visible=False, elem_classes=["status-bar"])
 
-                with gr.Column(scale=3):
-                    chatbot = gr.Chatbot(height=600)
-                    msg = gr.Textbox(label="Ask about IBM MQ")
-                    clear = gr.Button("Clear")
+        with gr.Column(visible=False, elem_classes=["card", "workspace"], elem_id="workspace") as main_interface:
+            with gr.Row(elem_classes=["workspace-header"]):
+                gr.Markdown("### Workspace", elem_classes=["card-title", "no-margin"])
+                user_badge = gr.Markdown("", elem_classes=["badge"])
+                logout_btn = gr.Button("Logout", elem_classes=["ghost-btn"])
 
-            msg.submit(respond, [msg, chatbot, status], [msg, chatbot])
+            with gr.Tabs(elem_classes=["tabset"]) as tabs:
+                with gr.Tab("Chat Experience", elem_id="chat-tab"):
+                    gr.Markdown(
+                        "Engage with your IBM MQ knowledge base using a clean, ChatGPT-inspired conversational flow.",
+                        elem_classes=["muted"],
+                    )
+                    chatbot = gr.Chatbot(height=540, bubble_full_width=False, layout="panel", elem_classes=["chatbot"])
+                    with gr.Row():
+                        msg = gr.Textbox(
+                            label="Ask about IBM MQ",
+                            placeholder="Ask a question or paste a log snippet...",
+                            elem_classes=["text-input", "chat-input"],
+                        )
+                        clear = gr.Button("Clear", elem_classes=["ghost-btn"])
+
+                with gr.Tab("Document Studio", visible=False, elem_id="admin-tab") as admin_tab:
+                    gr.Markdown(
+                        "Administer the localized corpus: review, ingest, or prune documents powering the RAG pipeline.",
+                        elem_classes=["muted"],
+                    )
+                    with gr.Row():
+                        doc_list = gr.Dropdown(choices=[], label="Active Documents", interactive=True, elem_classes=["text-input"])
+                        refresh_btn = gr.Button("Refresh Library", elem_classes=["ghost-btn"])
+                    library_overview = gr.Markdown(elem_classes=["status-bar"])
+                    with gr.Row():
+                        file_upload = gr.File(
+                            label="Upload IBM MQ PDFs",
+                            file_count="multiple",
+                            file_types=[".pdf"],
+                            interactive=True,
+                        )
+                        index_btn = gr.Button("Ingest PDFs", elem_classes=["primary-btn"])
+                        delete_btn = gr.Button("Delete Selected", elem_classes=["danger-btn"])
+
+            msg.submit(respond, [msg, chatbot, role_state], [msg, chatbot])
             clear.click(lambda: None, None, chatbot, queue=False)
 
         login_btn.click(
             login,
             inputs=[user, pwd, role],
-            outputs=[login_box, main_interface, status],
+            outputs=[login_box, main_interface, status, role_state, user_state],
         ).then(
             show_admin_controls,
-            inputs=status,
-            outputs=[file_upload, index_btn, doc_list, delete_btn],
+            inputs=role_state,
+            outputs=[
+                admin_tab,
+                file_upload,
+                index_btn,
+                doc_list,
+                delete_btn,
+                library_overview,
+            ],
+        ).then(
+            lambda r, u: gr.update(visible=True, value=f"{u} ({r})"),
+            inputs=[role_state, user_state],
+            outputs=user_badge,
+        ).then(
+            lambda _: gr.update(visible=True),
+            inputs=role_state,
+            outputs=status,
         )
 
-        index_btn.click(upload_and_index, file_upload, gr.Textbox())
+        refresh_btn.click(refresh_documents, None, doc_list)
+        index_btn.click(upload_and_index, file_upload, library_overview)
         file_upload.change(refresh_documents, None, doc_list)
-        delete_btn.click(handle_delete, doc_list, gr.Textbox())
+        delete_btn.click(handle_delete, doc_list, library_overview)
+        logout_btn.click(
+            logout,
+            inputs=role_state,
+            outputs=[login_box, main_interface, status, role_state, chatbot, doc_list],
+        )
 
     return demo
 
