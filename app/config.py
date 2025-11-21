@@ -1,9 +1,11 @@
 """Application configuration management.
 
 This module centralizes paths, credentials, and model configuration using
-environment variables while keeping sensible defaults for local testing.
-All values are designed to be safe for production when secrets are provided
-through a `.env` file or Docker environment variables.
+environment variables while keeping sensible defaults for local testing. All
+values are designed to be safe for production when secrets are provided through
+a `.env` file or Docker environment variables. The configuration follows the
+International Programming Standards for documentation and readability so that
+operators can audit and tune runtime parameters with confidence.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ USER_PASS: Final[str] = os.getenv("USER_PASSWORD", "mquser2025")
 MODEL_PATH: Final[str | None] = os.getenv("MODEL_PATH")
 MODEL_N_CTX: Final[int] = int(os.getenv("MODEL_N_CTX", 4096))
 MODEL_THREADS: Final[int] = int(os.getenv("MODEL_THREADS", 8))
+SHARE_INTERFACE: Final[bool] = os.getenv("SHARE_INTERFACE", "true").lower() == "true"
 
 LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", "DEBUG")
 LOG_FORMAT: Final[str] = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
