@@ -1,8 +1,8 @@
-"""PDF ingestion utilities powered by Docling.
+"""PDF ingestion utilities powered by PyPDFium.
 
 This module converts PDFs into clean text, applies chunking, and returns
 metadata used by the vector store. Verbose logging is provided for
-traceability.
+traceability in line with international programming documentation standards.
 """
 
 from __future__ import annotations
@@ -11,18 +11,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-try:
-    from docling.document_converter import DocumentConverter
-    from docling.document_converter import PdfFormat
-    from docling.document_converter.converters import PdfiumTextExtractor
-    from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
-    from docling_core.types import Page, TextSegment
-except ImportError as exc:  # pragma: no cover - import failure handled for runtime clarity
-    raise ImportError(
-        "Docling requires the Deep Search toolkit. Please install the project "
-        "dependencies (pip install -r requirements.txt) to include the "
-        "deepsearch-toolkit extra."
-    ) from exc
+import pypdfium2 as pdfium
 
 logger = logging.getLogger(__name__)
 
@@ -33,33 +22,37 @@ class PdfIngestor:
     def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200) -> None:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.converter = DocumentConverter(
-            pdf_formats=[PdfFormat.PDF],
-            pipeline_builder=lambda: StandardPdfPipeline(text_extractor=PdfiumTextExtractor()),
+        logger.info(
+            "Initialized PdfIngestor with chunk_size=%d overlap=%d", chunk_size, chunk_overlap
         )
-        logger.info("Initialized PdfIngestor with chunk_size=%d overlap=%d", chunk_size, chunk_overlap)
 
     def convert_pdf(self, pdf_path: Path) -> Tuple[List[str], List[dict]]:
         """Convert a PDF into text chunks and metadata entries."""
 
         logger.info("Converting PDF: %s", pdf_path)
-        document = self.converter.convert(pdf_path)
-        text_segments = self._collect_segments(document.pages)
-        chunks, metadata = self._chunk_segments(text_segments, pdf_path)
+        text = self._extract_text(pdf_path)
+        chunks, metadata = self._chunk_text(text, pdf_path)
         logger.info("Converted %s into %d chunks", pdf_path.name, len(chunks))
         return chunks, metadata
 
-    @staticmethod
-    def _collect_segments(pages: Iterable[Page]) -> List[TextSegment]:
-        segments: List[TextSegment] = []
-        for page in pages:
-            segments.extend(page.text_segments)
-        logger.debug("Collected %d text segments from PDF", len(segments))
-        return segments
+    def _extract_text(self, pdf_path: Path) -> str:
+        """Extract text from a PDF using PyPDFium with detailed logging."""
 
-    def _chunk_segments(self, segments: Iterable[TextSegment], pdf_path: Path) -> Tuple[List[str], List[dict]]:
-        text = "\n".join(segment.text for segment in segments if segment.text)
-        return self._chunk_text(text, pdf_path)
+        document = pdfium.PdfDocument(str(pdf_path))
+        logger.debug("Opened PDF %s with %d pages", pdf_path.name, len(document))
+        pages_text: List[str] = []
+
+        for index, page in enumerate(document):
+            logger.debug("Processing page %d of %s", index + 1, pdf_path.name)
+            text_page = page.get_textpage()
+            page_text = text_page.get_text_range()
+            pages_text.append(page_text)
+            text_page.close()
+            page.close()
+
+        full_text = "\n".join(pages_text)
+        logger.debug("Extracted %d characters from %s", len(full_text), pdf_path.name)
+        return full_text
 
     def _chunk_text(self, text: str, pdf_path: Path) -> Tuple[List[str], List[dict]]:
         chunks: List[str] = []

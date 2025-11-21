@@ -15,7 +15,7 @@ RUN pip install --verbose --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim
 
-# Install lightweight system dependencies required by llama.cpp and docling
+# Install lightweight system dependencies required by llama.cpp and PDF parsing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libopenblas-dev \
