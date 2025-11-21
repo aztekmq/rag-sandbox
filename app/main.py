@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Tuple
 
 import gradio as gr
+import gradio.blocks as gr_blocks
 import gradio.routes as gr_routes
 
 from app.auth import authenticate
@@ -77,31 +78,54 @@ ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 
 def _monkeypatch_gradio_api_info() -> None:
-    """Provide a defensive wrapper for Gradio API info generation.
+    """Provide defensive wrappers for Gradio API info generation.
 
     Gradio attempts to produce OpenAPI-style metadata on startup. Certain
-    component combinations can surface a `TypeError` in
+    component combinations can surface a ``TypeError`` in
     ``gradio_client.utils.json_schema_to_python_type`` when boolean schema
-    fragments are present. This wrapper retains verbose logging for debugging
-    while shielding the application from startup failures, which aligns with the
-    user's requirement for robust, traceable execution.
+    fragments are present. This wrapper stack retains verbose logging for
+    debugging while shielding the application from startup failures, which
+    aligns with the user's requirement for robust, traceable execution under
+    international programming documentation standards.
     """
 
     if not hasattr(gr_routes, "api_info"):
         logger.warning("gradio.routes.api_info is unavailable; skipping monkeypatch")
-        return
+    else:
+        original_api_info = gr_routes.api_info
 
-    original_api_info = gr_routes.api_info
+        def safe_api_info(serialize: bool = False):  # type: ignore[override]
+            """Invoke Gradio's api_info safely, logging recoverable failures."""
 
-    def safe_api_info(serialize: bool = False):  # type: ignore[override]
-        try:
-            return original_api_info(serialize)
-        except TypeError as exc:  # pragma: no cover - defensive guard
-            logger.exception("Failed to build Gradio API info", exc_info=exc)
-            return {}
+            try:
+                return original_api_info(serialize)
+            except TypeError as exc:  # pragma: no cover - defensive guard
+                logger.exception(
+                    "Failed to build Gradio API info; returning empty schema", exc_info=exc
+                )
+                return {}
 
-    gr_routes.api_info = safe_api_info
-    logger.debug("Applied defensive Gradio api_info wrapper")
+        gr_routes.api_info = safe_api_info
+        logger.debug("Applied defensive gradio.routes.api_info wrapper")
+
+    if hasattr(gr_blocks.Blocks, "get_api_info"):
+        original_get_api_info = gr_blocks.Blocks.get_api_info
+
+        def safe_get_api_info(self):  # type: ignore[override]
+            """Safely build API metadata, avoiding crashes from schema parsing."""
+
+            try:
+                return original_get_api_info(self)
+            except TypeError as exc:  # pragma: no cover - defensive guard
+                logger.exception(
+                    "Failed to generate Blocks API info; returning empty schema", exc_info=exc
+                )
+                return {}
+
+        gr_blocks.Blocks.get_api_info = safe_get_api_info
+        logger.debug("Patched gradio.blocks.Blocks.get_api_info for resilience")
+    else:
+        logger.warning("gradio.blocks.Blocks.get_api_info is unavailable; no patch applied")
 
 
 def build_ui() -> gr.Blocks:
