@@ -87,6 +87,10 @@ def _monkeypatch_gradio_api_info() -> None:
     user's requirement for robust, traceable execution.
     """
 
+    if not hasattr(gr_routes, "api_info"):
+        logger.warning("gradio.routes.api_info is unavailable; skipping monkeypatch")
+        return
+
     original_api_info = gr_routes.api_info
 
     def safe_api_info(serialize: bool = False):  # type: ignore[override]
