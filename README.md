@@ -135,6 +135,7 @@ rag-sandbox/
 ## Logging and Observability
 - Logs are written to stdout and mirrored to `data/logs/app.log`; inspect with `docker logs mq-rag` or by reading the file from the mounted volume.
 - Verbose logging is enabled by default (`LOG_LEVEL=INFO`); set `LOG_LEVEL=DEBUG` for deeper traceability during ingestion and inference.
+- Python 3.11 builders should rebuild after pulling updates: Docling is pinned to `1.7.2` to pull a compatible `docling-parse` release and avoid installation errors.
 
 ## Notes and Best Practices
 - The container runs entirely offline after the initial model download.
