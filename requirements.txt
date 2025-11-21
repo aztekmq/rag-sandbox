@@ -1,12 +1,10 @@
 gradio==4.44.0
 llama-cpp-python==0.2.89
 chromadb==0.5.5
-# Updated to avoid missing docling-parse dependency when building under Python 3.11.
-# docling-parse is pinned explicitly so Docker builds don't fetch yanked or
-# incompatible parser releases. docling 1.7.2 is no longer published, so we pin to
-# the nearest available release to keep dependency resolution reliable while maintaining
-# compatible parsing behaviour.
+# docling-parse must stay within the 1.x line to satisfy docling's dependency range.
+# Pinning avoids resolution drift during Docker builds and retains compatible parsing
+# behaviour with Python 3.11.
 docling==1.7.1
-docling-parse==4.7.1
+docling-parse==1.7.1
 sentence-transformers==3.0.1
 python-dotenv==1.0.1
