@@ -3,6 +3,8 @@
 # Ensures Docker Compose builds run with verbose logging and an isolated credential-free
 # configuration to avoid registry helper errors during the BuildKit bootstrap phase.
 
+mkdir -p models data
+
 set -euo pipefail
 set -x
 
