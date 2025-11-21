@@ -84,7 +84,15 @@ Because instead of making stuff up, the robot uses **real information** it just 
    MODEL_PATH=/app/models/llama-3.1-8b-instruct-q5_k_m.gguf
    LOG_LEVEL=DEBUG
    SHARE_INTERFACE=false
-```
+   ```
+
+   The `MODEL_PATH` value must point to the exact GGUF file *inside* the
+   container. When running with Docker, mount your downloaded model into
+   `/app/models` and confirm the path with:
+   ```bash
+   docker exec -it mq-rag ls -l /app/models
+   docker exec -it mq-rag printenv MODEL_PATH
+   ```
 
 ### Embedding model (offline friendly)
 

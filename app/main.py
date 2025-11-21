@@ -78,13 +78,18 @@ def _resolve_uploaded_file(file: gr.File) -> tuple[Path, Path]:
     if getattr(file, "path", None):
         candidate_sources.append(Path(file.path))
 
+    # ``value`` is used by certain ``NamedString`` wrappers to hold the temp path.
+    if getattr(file, "value", None):
+        candidate_sources.append(Path(file.value))
+
     # If the object itself is path-like, use it as a final fallback.
     if isinstance(file, (str, Path)):
         candidate_sources.append(Path(file))
 
     for source in candidate_sources:
+        logger.debug("Inspecting candidate upload source: %s", source)
         if source.exists():
-            display_name = getattr(file, "orig_name", source.name)
+            display_name = getattr(file, "orig_name", getattr(file, "name", source.name))
             sanitized_name = Path(display_name).name
             destination = PDF_DIR / sanitized_name
             logger.debug(
