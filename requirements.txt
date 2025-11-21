@@ -5,6 +5,8 @@ chromadb==0.5.5
 # Pinning avoids resolution drift during Docker builds and retains compatible parsing
 # behaviour with Python 3.11.
 docling==1.7.1
-docling-parse==1.7.1
+# docling-parse 1.7.1 is unavailable on PyPI; pin to the latest compatible 1.x
+# release to keep dependency resolution stable while satisfying docling's range.
+docling-parse==1.6.2
 sentence-transformers==3.0.1
 python-dotenv==1.0.1
