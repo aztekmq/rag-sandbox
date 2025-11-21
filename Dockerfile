@@ -5,7 +5,9 @@
 FROM python:3.11-slim AS builder
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Use verbose logging during dependency installation to aid debugging in CI/CD
+# and container build workflows, following international documentation standards.
+RUN pip install --verbose --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim
 
