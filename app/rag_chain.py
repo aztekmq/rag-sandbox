@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import chromadb
 from chromadb.config import Settings
@@ -16,6 +16,16 @@ from app.utils.embeddings import embed_documents, embed_query
 from app.utils.pdf_ingest import ingest_pdf_files
 
 logger = logging.getLogger(__name__)
+
+
+class ModelPathError(FileNotFoundError):
+    """Raised when the configured MODEL_PATH is missing or invalid."""
+
+    def __init__(self, model_path: Path):
+        super().__init__(
+            f"Model path does not exist: {model_path}. Download the GGUF to this location or set MODEL_PATH to an existing file."
+        )
+        self.model_path = model_path
 
 
 class RagEngine:
@@ -32,9 +42,7 @@ class RagEngine:
                 "Model path does not exist: %s. Ensure the GGUF file is mounted or download it via README instructions.",
                 model_path,
             )
-            raise FileNotFoundError(
-                f"Model path does not exist: {model_path}. Download the GGUF to this location or set MODEL_PATH to an existing file."
-            )
+            raise ModelPathError(model_path)
 
         os.environ.setdefault("CHROMA_PRODUCT_TELEMETRY_IMPL", "noop")
         os.environ.setdefault("CHROMA_TELEMETRY_IMPL", "noop")
@@ -133,20 +141,53 @@ def get_engine() -> RagEngine:
 
 
 def ingest_pdfs() -> str:
-    engine = get_engine()
+    engine, error_msg = _safe_get_engine()
+    if error_msg:
+        return error_msg
     return engine.ingest()
 
 
 def query_rag(question: str) -> str:
-    engine = get_engine()
+    engine, error_msg = _safe_get_engine()
+    if error_msg:
+        return error_msg
     return engine.query(question)
 
 
 def get_documents_list() -> List[str]:
-    engine = get_engine()
+    engine, error_msg = _safe_get_engine()
+    if error_msg:
+        return []
     return engine.list_documents()
 
 
 def delete_document(source_name: str) -> str:
-    engine = get_engine()
+    engine, error_msg = _safe_get_engine()
+    if error_msg:
+        return error_msg
     return engine.delete_document(source_name)
+
+
+def _safe_get_engine() -> Tuple[RagEngine | None, str]:
+    """Return a ready RAG engine or a user-facing error message.
+
+    This helper centralizes defensive handling for model path failures so that UI
+    interactions degrade gracefully when the GGUF file is missing. Verbose
+    logging captures the full exception chain for operators while end users
+    receive actionable guidance instead of a stack trace.
+    """
+
+    try:
+        return get_engine(), ""
+    except ModelPathError as exc:
+        logger.exception(
+            "RAG engine initialization failed because the model file is missing at %s",
+            exc.model_path,
+        )
+        return None, (
+            "The language model file is missing. Please download the GGUF to "
+            f"{MODEL_PATH} or set MODEL_PATH to an existing file before retrying."
+        )
+    except Exception:
+        logger.exception("Unexpected failure while preparing the RAG engine")
+        return None, "The RAG engine is unavailable due to an unexpected error. Check logs for details."
