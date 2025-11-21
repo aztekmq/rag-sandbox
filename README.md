@@ -106,6 +106,15 @@ docker run -d -p 7860:7860 \
   rag-sandbox
 ```
 
+## Force anonymous Docker builds (avoids credential helper issues)
+If your Docker host is configured with credential helpers that are unavailable in this environment, use the helper script below to build anonymously with verbose logging for easier debugging:
+
+```bash
+./scripts/docker_build_anonymous.sh -t rag-sandbox .
+```
+
+The script sets a temporary, empty `DOCKER_CONFIG` directory so BuildKit pulls `docker/dockerfile:1` anonymously, then cleans up after the build. All arguments are forwarded to `docker build` so you can pass additional flags as needed.
+
 ## Project Structure
 ```
 rag-sandbox/
