@@ -36,6 +36,12 @@ DATA_DIR: Final[Path] = BASE_DIR / "data"
 PDF_DIR: Final[Path] = DATA_DIR / "pdfs"
 CHROMA_DIR: Final[Path] = DATA_DIR / "chroma_db"
 LOG_DIR: Final[Path] = DATA_DIR / "logs"
+DEFAULT_MODEL_FILENAME: Final[str] = "llama-3.1-8b-instruct-q5_k_m.gguf"
+DEFAULT_MODEL_PATH: Final[Path] = (
+    Path(os.getenv("MODEL_PATH", BASE_DIR / "models" / DEFAULT_MODEL_FILENAME))
+    .expanduser()
+    .resolve()
+)
 EMBEDDING_MODEL_DIR: Final[Path] = Path(
     os.getenv("EMBEDDING_MODEL_DIR", DATA_DIR / "models" / "snowflake-arctic-embed-xs")
 )
@@ -48,7 +54,7 @@ ADMIN_PASS: Final[str] = os.getenv("ADMIN_PASSWORD", "change_me_strong_password"
 USER_USER: Final[str] = os.getenv("USER_USERNAME", "user")
 USER_PASS: Final[str] = os.getenv("USER_PASSWORD", "mquser2025")
 
-MODEL_PATH: Final[str | None] = os.getenv("MODEL_PATH")
+MODEL_PATH: Final[Path] = DEFAULT_MODEL_PATH
 MODEL_N_CTX: Final[int] = int(os.getenv("MODEL_N_CTX", 4096))
 MODEL_THREADS: Final[int] = int(os.getenv("MODEL_THREADS", 8))
 # Explicitly disable Gradio tunneling by default to keep traffic local. Operators

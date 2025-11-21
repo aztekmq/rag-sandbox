@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import List
 
@@ -23,20 +24,39 @@ class RagEngine:
     def __init__(self) -> None:
         if not MODEL_PATH:
             raise ValueError("MODEL_PATH must be set to the GGUF file")
-        logger.info("Initializing RAG engine with model at %s", MODEL_PATH)
+
+        model_path = Path(MODEL_PATH)
+        logger.debug("Resolved model path to %s", model_path)
+        if not model_path.is_file():
+            logger.error(
+                "Model path does not exist: %s. Ensure the GGUF file is mounted or download it via README instructions.",
+                model_path,
+            )
+            raise FileNotFoundError(
+                f"Model path does not exist: {model_path}. Download the GGUF to this location or set MODEL_PATH to an existing file."
+            )
+
+        os.environ.setdefault("CHROMA_PRODUCT_TELEMETRY_IMPL", "noop")
+        os.environ.setdefault("CHROMA_TELEMETRY_IMPL", "noop")
+        logger.debug("Chroma telemetry disabled via environment overrides for offline-friendly operation")
+        logger.info("Initializing RAG engine with model at %s", model_path)
 
         self.client = chromadb.PersistentClient(
             path=str(CHROMA_DIR),
-            settings=Settings(anonymized_telemetry=False),
+            settings=Settings(
+                anonymized_telemetry=False,
+                chroma_product_telemetry_impl="noop",
+                chroma_telemetry_impl="noop",
+            ),
         )
         self.collection = self.client.get_or_create_collection(
             name="ibm-mq-docs", metadata={"description": "IBM MQ reference"}
         )
         self.llm = Llama(
-            model_path=MODEL_PATH,
+            model_path=str(model_path),
             n_ctx=MODEL_N_CTX,
             n_threads=MODEL_THREADS,
-            verbose=False,
+            verbose=True,
         )
         logger.info("RAG engine ready")
 
