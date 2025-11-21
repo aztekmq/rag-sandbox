@@ -92,35 +92,27 @@ def _monkeypatch_gradio_api_info() -> None:
     if not hasattr(gr_routes, "api_info"):
         logger.warning("gradio.routes.api_info is unavailable; skipping monkeypatch")
     else:
-        original_api_info = gr_routes.api_info
-
         def safe_api_info(serialize: bool = False):  # type: ignore[override]
-            """Invoke Gradio's api_info safely, logging recoverable failures."""
+            """Return minimal API info to avoid upstream schema parsing bugs."""
 
-            try:
-                return original_api_info(serialize)
-            except TypeError as exc:  # pragma: no cover - defensive guard
-                logger.exception(
-                    "Failed to build Gradio API info; returning empty schema", exc_info=exc
-                )
-                return {}
+            logger.info(
+                "Bypassing Gradio route API schema generation (serialize=%s) to prevent"
+                " boolean-schema failures; returning empty schema", serialize
+            )
+            return {}
 
         gr_routes.api_info = safe_api_info
         logger.debug("Applied defensive gradio.routes.api_info wrapper")
 
     if hasattr(gr_blocks.Blocks, "get_api_info"):
-        original_get_api_info = gr_blocks.Blocks.get_api_info
-
         def safe_get_api_info(self):  # type: ignore[override]
-            """Safely build API metadata, avoiding crashes from schema parsing."""
+            """Skip unstable API metadata generation and log the decision verbosely."""
 
-            try:
-                return original_get_api_info(self)
-            except TypeError as exc:  # pragma: no cover - defensive guard
-                logger.exception(
-                    "Failed to generate Blocks API info; returning empty schema", exc_info=exc
-                )
-                return {}
+            logger.info(
+                "Skipping Gradio Blocks API info generation to avoid boolean schema crashes;"
+                " returning empty schema"
+            )
+            return {}
 
         gr_blocks.Blocks.get_api_info = safe_get_api_info
         logger.debug("Patched gradio.blocks.Blocks.get_api_info for resilience")
