@@ -15,7 +15,7 @@ from app.rag_chain import delete_document, get_documents_list, ingest_pdfs, quer
 logger = logging.getLogger(__name__)
 
 
-def login(username: str, password: str, role: str) -> Tuple[gr.Update, gr.Update, str]:
+def login(username: str, password: str, role: str) -> Tuple[gr.update, gr.update, str]:
     """Authenticate user and toggle interface visibility."""
 
     if authenticate(username, password, role):

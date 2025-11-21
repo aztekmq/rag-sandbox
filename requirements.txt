@@ -1,4 +1,4 @@
-gradio==4.44.0
+gradio==4.44.1
 llama-cpp-python==0.2.89
 chromadb==0.5.5
 # PyPDFium powers PDF ingestion without the Deep Search toolkit runtime burden.
