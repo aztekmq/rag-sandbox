@@ -1,6 +1,7 @@
 gradio==4.44.0
 llama-cpp-python==0.2.89
 chromadb==0.5.5
-docling==1.3.0
+# Updated to avoid missing docling-parse dependency when building under Python 3.11.
+docling==1.7.2
 sentence-transformers==3.0.1
 python-dotenv==1.0.1
