@@ -18,6 +18,7 @@ from typing import Tuple
 import gradio as gr
 import gradio.blocks as gr_blocks
 import gradio.routes as gr_routes
+import gradio_client.utils as gr_client_utils
 
 from app.auth import authenticate
 from app.config import PDF_DIR, SHARE_INTERFACE
@@ -155,6 +156,38 @@ def _monkeypatch_gradio_api_info() -> None:
     aligns with the user's requirement for robust, traceable execution under
     international programming documentation standards.
     """
+
+    original_schema_to_type = gr_client_utils.json_schema_to_python_type
+
+    def safe_json_schema_to_python_type(schema, defs=None):  # type: ignore[override]
+        """Handle permissive JSON schema nodes without raising exceptions.
+
+        Gradio occasionally emits boolean schema fragments (``True``/``False``)
+        that violate the assumptions of ``json_schema_to_python_type``. The
+        patched implementation documents the behavior explicitly and returns a
+        readable placeholder type instead of bubbling up a ``TypeError``.
+        """
+
+        logger.debug("Translating JSON schema to Python type: %s", schema)
+
+        if isinstance(schema, bool):
+            return "bool" if schema else "null"
+
+        try:
+            return original_schema_to_type(schema, defs)
+        except TypeError:
+            logger.exception(
+                "Encountered non-iterable schema fragment; substituting unknown type for resilience"
+            )
+            return "unknown"
+        except Exception:
+            logger.exception(
+                "Unexpected failure translating JSON schema; substituting unknown type for resilience"
+            )
+            return "unknown"
+
+    gr_client_utils.json_schema_to_python_type = safe_json_schema_to_python_type
+    logger.debug("Applied resilient gradio_client.utils.json_schema_to_python_type wrapper")
 
     if not hasattr(gr_routes, "api_info"):
         logger.warning("gradio.routes.api_info is unavailable; skipping monkeypatch")
