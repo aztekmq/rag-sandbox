@@ -32,7 +32,7 @@ MODEL_PATH: Final[str | None] = os.getenv("MODEL_PATH")
 MODEL_N_CTX: Final[int] = int(os.getenv("MODEL_N_CTX", 4096))
 MODEL_THREADS: Final[int] = int(os.getenv("MODEL_THREADS", 8))
 
-LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", "INFO")
+LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", "DEBUG")
 LOG_FORMAT: Final[str] = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
 
 for directory in (DATA_DIR, PDF_DIR, CHROMA_DIR, LOG_DIR):

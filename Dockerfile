@@ -34,4 +34,5 @@ COPY requirements.txt README.md ./
 
 EXPOSE 7860
 
-CMD ["python", "app/main.py"]
+# Run as a module to ensure the package is discoverable when the container starts.
+CMD ["python", "-m", "app.main"]
