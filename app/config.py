@@ -51,7 +51,11 @@ USER_PASS: Final[str] = os.getenv("USER_PASSWORD", "mquser2025")
 MODEL_PATH: Final[str | None] = os.getenv("MODEL_PATH")
 MODEL_N_CTX: Final[int] = int(os.getenv("MODEL_N_CTX", 4096))
 MODEL_THREADS: Final[int] = int(os.getenv("MODEL_THREADS", 8))
-SHARE_INTERFACE: Final[bool] = os.getenv("SHARE_INTERFACE", "true").lower() == "true"
+# Explicitly disable Gradio tunneling by default to keep traffic local. Operators
+# can opt-in by setting SHARE_INTERFACE=true when internet access is permitted.
+SHARE_INTERFACE_REQUESTED: Final[bool] = (
+    os.getenv("SHARE_INTERFACE", "false").strip().lower() == "true"
+)
 
 LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", "DEBUG")
 LOG_FORMAT: Final[str] = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
@@ -70,3 +74,14 @@ file_handler = logging.FileHandler(LOG_FILE)
 file_handler.setLevel(log_level)
 file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 logging.getLogger().addHandler(file_handler)
+
+# Gradio share links require outbound connectivity. If the deployment is
+# configured for offline operation, force sharing off and emit a clear warning
+# so operators understand why no public URL is exposed.
+SHARE_INTERFACE: bool = SHARE_INTERFACE_REQUESTED
+if SHARE_INTERFACE_REQUESTED and not ALLOW_HF_INTERNET:
+    logging.getLogger(__name__).warning(
+        "SHARE_INTERFACE requested but ALLOW_HF_INTERNET is false; disabling public share "
+        "link to keep the application local only."
+    )
+    SHARE_INTERFACE = False
