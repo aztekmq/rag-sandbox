@@ -1,0 +1,19 @@
+:root {
+  --color-background: #0f1117;
+  --color-text: #e5e7eb;
+  --color-accent: #5eead4;
+  --color-surface: #1f2937;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-text);
+}
+
+div, .gradio-container {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+button {
+  border-radius: 10px !important;
+}

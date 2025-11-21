@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+.env.local
+models/
+data/
+*.gguf
+.chroma/
+.DS_Store
+*.log
+.idea/
+.vscode/
