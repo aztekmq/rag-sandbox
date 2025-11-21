@@ -150,10 +150,11 @@ rag-sandbox/
 ## Logging and Observability
 - Logs are written to stdout and mirrored to `data/logs/app.log`; inspect with `docker logs mq-rag` or by reading the file from the mounted volume.
 - Verbose logging is enabled by default (`LOG_LEVEL=DEBUG` via docker compose); lower to `INFO` if you want quieter output once the system is stable.
-- Python 3.11 builders should rebuild after pulling updates: Docling is pinned to `1.7.2` and `docling-parse` is locked at `4.7.1` to pull compatible parser wheels and avoid installation errors.
+- Python 3.11 builders should rebuild after pulling updates: Docling is pinned to `1.7.1`, `docling-parse` is locked at `1.6.2`, and `deepsearch-toolkit` is included to satisfy Docling's Deep Search dependency during PDF ingestion.
 
 ## Troubleshooting and Debugging
 - **Import errors (e.g., `ModuleNotFoundError: No module named 'app'`)**: Always run the service as a module so Python resolves the `app` package correctly. Use `python -m app.main` locally or keep the default container command.
+- **Docling Deep Search dependency**: If you see `ImportError: To use the Deep Search capabilities...`, reinstall requirements to ensure `deepsearch-toolkit` is present (`pip install -r requirements.txt`). This dependency is required for Docling's PDF ingestion pipeline.
 - **Enable/adjust verbosity**: Set `LOG_LEVEL=DEBUG` (default) for detailed tracing in both stdout and `data/logs/app.log`. If troubleshooting noisy dependencies, briefly bump to `INFO`, then revert to `DEBUG` to retain rich context.
 - **Validate environment variables**: Run `printenv | sort` inside the container to confirm credentials, `MODEL_PATH`, and logging settings are present. Missing values often lead to authentication failures or model loading errors.
 - **Check persisted artifacts**: Confirm `/app/data/pdfs` and `/app/data/chroma_db` are mounted. Empty mounts can explain missing documents or retrieval mismatches.

@@ -11,11 +11,18 @@ import logging
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-from docling.document_converter import DocumentConverter
-from docling.document_converter import PdfFormat
-from docling.document_converter.converters import PdfiumTextExtractor
-from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
-from docling_core.types import Page, TextSegment
+try:
+    from docling.document_converter import DocumentConverter
+    from docling.document_converter import PdfFormat
+    from docling.document_converter.converters import PdfiumTextExtractor
+    from docling.pipeline.standard_pdf_pipeline import StandardPdfPipeline
+    from docling_core.types import Page, TextSegment
+except ImportError as exc:  # pragma: no cover - import failure handled for runtime clarity
+    raise ImportError(
+        "Docling requires the Deep Search toolkit. Please install the project "
+        "dependencies (pip install -r requirements.txt) to include the "
+        "deepsearch-toolkit extra."
+    ) from exc
 
 logger = logging.getLogger(__name__)
 

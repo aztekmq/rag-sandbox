@@ -10,3 +10,4 @@ docling==1.7.1
 docling-parse==1.6.2
 sentence-transformers==3.0.1
 python-dotenv==1.0.1
+deepsearch-toolkit
