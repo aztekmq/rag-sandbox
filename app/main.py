@@ -104,25 +104,42 @@ def _monkeypatch_gradio_api_info() -> None:
                 return original_api_info(serialize=serialize)
             except Exception:
                 logger.exception(
-                    "Failed to generate Gradio route API info; returning empty schema for stability"
+                    "Failed to generate Gradio route API info; returning minimal stub for stability"
                 )
-                return {}
+                return {"named_endpoints": {}, "unnamed_endpoints": []}
 
         gr_routes.api_info = safe_api_info
         logger.debug("Applied defensive gradio.routes.api_info wrapper")
 
     if hasattr(gr_blocks.Blocks, "get_api_info"):
-        def safe_get_api_info(self):  # type: ignore[override]
-            """Bypass fragile Gradio schema translation while logging intent."""
+        original_get_api_info = gr_blocks.Blocks.get_api_info
 
-            logger.info(
-                "Bypassing Gradio Blocks API info generation to avoid known schema parsing"
-                " failures; returning empty metadata for stability"
-            )
-            return {}
+        def safe_get_api_info(self):  # type: ignore[override]
+            """Return Blocks API info with robust logging and fallbacks.
+
+            Gradio's schema translation can occasionally throw runtime errors when
+            optional schema nodes are absent. This wrapper preserves the original
+            behavior when possible, while emitting verbose diagnostics and
+            returning a predictable stub structure if the underlying implementation
+            fails. The stub retains the fields expected by the client so that the
+            UI continues to function even when schema generation is impaired.
+            """
+
+            logger.debug("Generating Gradio Blocks API info with protective wrapper")
+            try:
+                return original_get_api_info(self)
+            except Exception:
+                logger.exception(
+                    "Failed to build Gradio Blocks API info; supplying fallback schema with no endpoints"
+                )
+                return {
+                    "named_endpoints": {},
+                    "unnamed_endpoints": [],
+                    "dependencies": {"root": None, "modules": [], "imports": [], "targets": []},
+                }
 
         gr_blocks.Blocks.get_api_info = safe_get_api_info
-        logger.debug("Patched gradio.blocks.Blocks.get_api_info with safe no-op implementation")
+        logger.debug("Patched gradio.blocks.Blocks.get_api_info with protective wrapper")
     else:
         logger.warning("gradio.blocks.Blocks.get_api_info is unavailable; no patch applied")
 
