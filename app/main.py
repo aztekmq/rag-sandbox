@@ -56,7 +56,7 @@ def login(
     return gr.update(visible=True), gr.update(visible=False), "Wrong credentials!", "", ""
 
 
-def _resolve_uploaded_file(file: gr.File) -> tuple[Path, Path]:
+def _resolve_uploaded_file(file: gr.File | str | Path) -> tuple[Path, Path]:
     """Resolve a Gradio uploaded file to source and destination paths.
 
     Gradio's ``File`` component may deliver several object shapes across
@@ -70,7 +70,8 @@ def _resolve_uploaded_file(file: gr.File) -> tuple[Path, Path]:
 
     candidate_sources = []
 
-    # ``name`` is typically the temporary file path for NamedString wrappers.
+    # ``name`` is typically the temporary file path for NamedString wrappers, but
+    # can also be just the display name. We still log it to aid debugging.
     if getattr(file, "name", None):
         candidate_sources.append(Path(file.name))
 
@@ -100,10 +101,11 @@ def _resolve_uploaded_file(file: gr.File) -> tuple[Path, Path]:
             )
             return source, destination
 
+    logger.error("Upload resolution failed; evaluated sources: %s", candidate_sources)
     raise FileNotFoundError(f"Unable to locate uploaded file for object {file!r}")
 
 
-def upload_and_index(files: list[gr.File] | None) -> str:
+def upload_and_index(files: list[gr.File | str | Path] | None) -> str:
     """Persist uploaded PDFs and trigger re-indexing with resilient handling."""
 
     if not files:
@@ -399,6 +401,7 @@ def build_ui() -> gr.Blocks:
                             label="Upload IBM MQ PDFs",
                             file_count="multiple",
                             file_types=[".pdf"],
+                            type="filepath",
                             interactive=True,
                         )
                         index_btn = gr.Button("Ingest PDFs", elem_classes=["primary-btn"])
