@@ -92,27 +92,40 @@ def _monkeypatch_gradio_api_info() -> None:
     if not hasattr(gr_routes, "api_info"):
         logger.warning("gradio.routes.api_info is unavailable; skipping monkeypatch")
     else:
-        def safe_api_info(serialize: bool = False):  # type: ignore[override]
-            """Return minimal API info to avoid upstream schema parsing bugs."""
+        original_api_info = gr_routes.api_info
 
-            logger.info(
-                "Bypassing Gradio route API schema generation (serialize=%s) to prevent"
-                " boolean-schema failures; returning empty schema", serialize
+        def safe_api_info(serialize: bool = False):  # type: ignore[override]
+            """Generate route API info with verbose error handling."""
+
+            logger.debug(
+                "Generating Gradio route API info (serialize=%s) with fault tolerance", serialize
             )
-            return {}
+            try:
+                return original_api_info(serialize=serialize)
+            except Exception:
+                logger.exception(
+                    "Failed to generate Gradio route API info; returning empty schema for stability"
+                )
+                return {}
 
         gr_routes.api_info = safe_api_info
         logger.debug("Applied defensive gradio.routes.api_info wrapper")
 
     if hasattr(gr_blocks.Blocks, "get_api_info"):
-        def safe_get_api_info(self):  # type: ignore[override]
-            """Skip unstable API metadata generation and log the decision verbosely."""
+        original_get_api_info = gr_blocks.Blocks.get_api_info
 
-            logger.info(
-                "Skipping Gradio Blocks API info generation to avoid boolean schema crashes;"
-                " returning empty schema"
-            )
-            return {}
+        def safe_get_api_info(self):  # type: ignore[override]
+            """Generate Blocks API metadata while falling back safely on errors."""
+
+            logger.debug("Generating Gradio Blocks API info with protective wrapper")
+            try:
+                return original_get_api_info(self)
+            except Exception:
+                logger.exception(
+                    "Skipping Gradio Blocks API info generation due to upstream failure;"
+                    " returning empty schema"
+                )
+                return {}
 
         gr_blocks.Blocks.get_api_info = safe_get_api_info
         logger.debug("Patched gradio.blocks.Blocks.get_api_info for resilience")
