@@ -160,19 +160,38 @@ def _monkeypatch_gradio_api_info() -> None:
 
     original_schema_to_type = gr_client_utils.json_schema_to_python_type
 
+    def _coerce_bool_schema(fragment):
+        """Normalize boolean JSON schema fragments into dictionaries.
+
+        The Gradio helper ``json_schema_to_python_type`` expects mapping-based
+        schema nodes, but boolean fragments are valid JSON Schema shortcuts. To
+        keep logging verbose while avoiding repeated stack traces, this helper
+        recursively converts ``True``/``False`` into descriptive dictionary
+        placeholders that the downstream translator can safely consume.
+        """
+
+        if isinstance(fragment, bool):
+            return {"type": "boolean" if fragment else "null", "description": "coerced bool schema"}
+        if isinstance(fragment, dict):
+            return {key: _coerce_bool_schema(value) for key, value in fragment.items()}
+        if isinstance(fragment, list):
+            return [_coerce_bool_schema(item) for item in fragment]
+        return fragment
+
     def safe_json_schema_to_python_type(schema, defs=None):  # type: ignore[override]
         """Handle permissive JSON schema nodes without raising exceptions.
 
         Gradio occasionally emits boolean schema fragments (``True``/``False``)
         that violate the assumptions of ``json_schema_to_python_type``. The
-        patched implementation documents the behavior explicitly and returns a
-        readable placeholder type instead of bubbling up a ``TypeError``.
+        patched implementation documents the behavior explicitly, coerces
+        boolean fragments into safe dictionaries, and returns a readable
+        placeholder type instead of bubbling up a ``TypeError``.
         """
 
         logger.debug("Translating JSON schema to Python type: %s", schema)
 
-        if isinstance(schema, bool):
-            return "bool" if schema else "null"
+        coerced_schema = _coerce_bool_schema(schema)
+        coerced_defs = _coerce_bool_schema(defs) if defs is not None else None
 
         try:
             signature = inspect.signature(original_schema_to_type)
@@ -181,8 +200,8 @@ def _monkeypatch_gradio_api_info() -> None:
                 "Resolved json_schema_to_python_type signature with defs support: %s", accepts_defs
             )
             if accepts_defs:
-                return original_schema_to_type(schema, defs)
-            return original_schema_to_type(schema)
+                return original_schema_to_type(coerced_schema, coerced_defs)
+            return original_schema_to_type(coerced_schema)
         except TypeError:
             logger.exception(
                 "Encountered non-iterable schema fragment; substituting unknown type for resilience"
