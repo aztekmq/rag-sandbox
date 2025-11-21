@@ -107,13 +107,19 @@ docker run -d -p 7860:7860 \
 ```
 
 ## Force anonymous Docker builds (avoids credential helper issues)
-If your Docker host is configured with credential helpers that are unavailable in this environment, use the helper script below to build anonymously with verbose logging for easier debugging:
+If your Docker host is configured with credential helpers that are unavailable in this environment, use the helper scripts below to build anonymously with verbose logging for easier debugging:
 
 ```bash
 ./scripts/docker_build_anonymous.sh -t rag-sandbox .
 ```
 
-The script sets a temporary, empty `DOCKER_CONFIG` directory so BuildKit pulls `docker/dockerfile:1` anonymously, then cleans up after the build. All arguments are forwarded to `docker build` so you can pass additional flags as needed.
+The script sets a temporary, empty `DOCKER_CONFIG` directory so BuildKit pulls `docker/dockerfile:1` anonymously, then cleans up after the build. All arguments are forwarded to `docker build` so you can pass additional flags as needed. To achieve the same effect for Docker Compose builds, run:
+
+```bash
+./launch.sh
+```
+
+`launch.sh` mirrors the anonymous-build behavior for Compose, exporting `DOCKER_CONFIG`, `DOCKER_BUILDKIT`, and `BUILDKIT_PROGRESS` to keep registry pulls verbose and credential-free.
 
 ## Project Structure
 ```
