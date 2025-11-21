@@ -56,16 +56,70 @@ def login(
     return gr.update(visible=True), gr.update(visible=False), "Wrong credentials!", "", ""
 
 
-def upload_and_index(files: list[gr.File] | None) -> str:
-    """Persist uploaded PDFs and trigger re-indexing."""
+def _resolve_uploaded_file(file: gr.File) -> tuple[Path, Path]:
+    """Resolve a Gradio uploaded file to source and destination paths.
 
-    if files is None:
+    Gradio's ``File`` component may deliver several object shapes across
+    versions (e.g., ``NamedString`` wrappers or temporary file handles).
+    This helper inspects common attributes to locate the on-disk temporary
+    file while preserving the original filename for storage. Verbose logging
+    documents each decision branch so operators can trace upload handling in
+    production environments that require auditable behavior under
+    international programming standards.
+    """
+
+    candidate_sources = []
+
+    # ``name`` is typically the temporary file path for NamedString wrappers.
+    if getattr(file, "name", None):
+        candidate_sources.append(Path(file.name))
+
+    # ``path`` is present on some file-like objects returned by Gradio.
+    if getattr(file, "path", None):
+        candidate_sources.append(Path(file.path))
+
+    # If the object itself is path-like, use it as a final fallback.
+    if isinstance(file, (str, Path)):
+        candidate_sources.append(Path(file))
+
+    for source in candidate_sources:
+        if source.exists():
+            display_name = getattr(file, "orig_name", source.name)
+            sanitized_name = Path(display_name).name
+            destination = PDF_DIR / sanitized_name
+            logger.debug(
+                "Resolved upload source=%s destination=%s (display=%s)",
+                source,
+                destination,
+                sanitized_name,
+            )
+            return source, destination
+
+    raise FileNotFoundError(f"Unable to locate uploaded file for object {file!r}")
+
+
+def upload_and_index(files: list[gr.File] | None) -> str:
+    """Persist uploaded PDFs and trigger re-indexing with resilient handling."""
+
+    if not files:
+        logger.warning("Upload invoked without files; returning guidance message")
         return "No files uploaded"
 
+    failures: list[str] = []
+
     for file in files:
-        destination = PDF_DIR / file.name.split("/")[-1]
-        file.save(destination)
-        logger.info("Saved PDF upload to %s", destination)
+        try:
+            source, destination = _resolve_uploaded_file(file)
+            destination.write_bytes(Path(source).read_bytes())
+            logger.info("Saved PDF upload from %s to %s", source, destination)
+        except Exception as exc:  # noqa: BLE001 - intentional breadth for resilience
+            logger.exception("Failed to persist uploaded file %r", file)
+            failures.append(str(exc))
+
+    if failures:
+        failure_msg = "\n".join(failures)
+        logger.error("One or more uploads failed: %s", failure_msg)
+        return f"Upload errors encountered:\n{failure_msg}"
 
     return ingest_pdfs()
 
