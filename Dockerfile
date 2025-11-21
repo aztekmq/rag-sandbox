@@ -4,6 +4,10 @@
 
 FROM python:3.11-slim AS builder
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 # Use verbose logging during dependency installation to aid debugging in CI/CD
 # and container build workflows, following international documentation standards.
