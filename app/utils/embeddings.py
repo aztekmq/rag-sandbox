@@ -1,4 +1,13 @@
-"""Embedding utilities backed by Snowflake Arctic models."""
+"""Embedding utilities backed by Snowflake Arctic models.
+
+The embedder is configured to run fully offline by default to keep container
+deployments from reaching Hugging Face or other public endpoints. Operators can
+override this behavior by setting the ``ALLOW_HF_INTERNET`` environment
+variable to ``true`` and providing ``EMBEDDING_MODEL_ID`` to point at a
+downloadable repository. Otherwise, the embedder will only load models from the
+local ``EMBEDDING_MODEL_DIR`` path and raise explicit errors when the assets are
+missing.
+"""
 
 from __future__ import annotations
 
@@ -8,18 +17,36 @@ from typing import Iterable, List
 
 from sentence_transformers import SentenceTransformer
 
+from app.config import ALLOW_HF_INTERNET, EMBEDDING_MODEL_DIR, EMBEDDING_MODEL_ID
+
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "Snowflake/snowflake-arctic-embed-xs"
+MODEL_NAME = EMBEDDING_MODEL_ID
 
 
 @lru_cache(maxsize=1)
 def get_embedder() -> SentenceTransformer:
     """Load and cache the embedding model."""
 
-    logger.info("Loading embedding model: %s", MODEL_NAME)
-    model = SentenceTransformer(MODEL_NAME)
-    logger.info("Embedding model loaded successfully")
+    logger.info(
+        "Loading embedding model: %s (offline=%s)", MODEL_NAME, not ALLOW_HF_INTERNET
+    )
+    try:
+        model = SentenceTransformer(
+            MODEL_NAME,
+            cache_folder=str(EMBEDDING_MODEL_DIR),
+            local_files_only=not ALLOW_HF_INTERNET,
+        )
+    except OSError as exc:  # pragma: no cover - defensive logging path
+        logger.error(
+            "Embedding assets not found in %s. Ensure the model is present on disk or"
+            " allow internet downloads via ALLOW_HF_INTERNET=true. Error: %s",
+            EMBEDDING_MODEL_DIR,
+            exc,
+        )
+        raise
+
+    logger.info("Embedding model loaded successfully from %s", EMBEDDING_MODEL_DIR)
     return model
 
 
