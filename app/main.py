@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Tuple
 
 import gradio as gr
+import gradio.routes as gr_routes
 
 from app.auth import authenticate
-from app.config import PDF_DIR
+from app.config import PDF_DIR, SHARE_INTERFACE
 from app.rag_chain import delete_document, get_documents_list, ingest_pdfs, query_rag
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,30 @@ def respond(message: str, history: list[list[str]], role_str: str):
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 
+def _monkeypatch_gradio_api_info() -> None:
+    """Provide a defensive wrapper for Gradio API info generation.
+
+    Gradio attempts to produce OpenAPI-style metadata on startup. Certain
+    component combinations can surface a `TypeError` in
+    ``gradio_client.utils.json_schema_to_python_type`` when boolean schema
+    fragments are present. This wrapper retains verbose logging for debugging
+    while shielding the application from startup failures, which aligns with the
+    user's requirement for robust, traceable execution.
+    """
+
+    original_api_info = gr_routes.api_info
+
+    def safe_api_info(serialize: bool = False):  # type: ignore[override]
+        try:
+            return original_api_info(serialize)
+        except TypeError as exc:  # pragma: no cover - defensive guard
+            logger.exception("Failed to build Gradio API info", exc_info=exc)
+            return {}
+
+    gr_routes.api_info = safe_api_info
+    logger.debug("Applied defensive Gradio api_info wrapper")
+
+
 def build_ui() -> gr.Blocks:
     """Build the Gradio Blocks interface."""
 
@@ -131,9 +156,10 @@ def build_ui() -> gr.Blocks:
 def main() -> None:
     """Start the Gradio application."""
 
+    _monkeypatch_gradio_api_info()
     logger.info("Launching Gradio app on 0.0.0.0:7860")
     demo = build_ui()
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=7860, share=SHARE_INTERFACE, show_api=False)
 
 
 if __name__ == "__main__":
