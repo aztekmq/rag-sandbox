@@ -112,23 +112,17 @@ def _monkeypatch_gradio_api_info() -> None:
         logger.debug("Applied defensive gradio.routes.api_info wrapper")
 
     if hasattr(gr_blocks.Blocks, "get_api_info"):
-        original_get_api_info = gr_blocks.Blocks.get_api_info
-
         def safe_get_api_info(self):  # type: ignore[override]
-            """Generate Blocks API metadata while falling back safely on errors."""
+            """Bypass fragile Gradio schema translation while logging intent."""
 
-            logger.debug("Generating Gradio Blocks API info with protective wrapper")
-            try:
-                return original_get_api_info(self)
-            except Exception:
-                logger.exception(
-                    "Skipping Gradio Blocks API info generation due to upstream failure;"
-                    " returning empty schema"
-                )
-                return {}
+            logger.info(
+                "Bypassing Gradio Blocks API info generation to avoid known schema parsing"
+                " failures; returning empty metadata for stability"
+            )
+            return {}
 
         gr_blocks.Blocks.get_api_info = safe_get_api_info
-        logger.debug("Patched gradio.blocks.Blocks.get_api_info for resilience")
+        logger.debug("Patched gradio.blocks.Blocks.get_api_info with safe no-op implementation")
     else:
         logger.warning("gradio.blocks.Blocks.get_api_info is unavailable; no patch applied")
 
