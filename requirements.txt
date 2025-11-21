@@ -1,13 +1,15 @@
 gradio==4.44.0
 llama-cpp-python==0.2.89
 chromadb==0.5.5
-# docling-parse must stay within the 1.x line to satisfy docling's dependency range.
-# Pinning avoids resolution drift during Docker builds and retains compatible parsing
-# behaviour with Python 3.11.
-docling==1.7.1
-# docling-parse 1.7.1 is unavailable on PyPI; pin to the latest compatible 1.x
-# release to keep dependency resolution stable while satisfying docling's range.
-docling-parse==1.6.2
+# Docling 2.x aligns with deepsearch-toolkit's newer dependency set (docling-core>=2),
+# eliminating prior resolver conflicts while retaining Python 3.11 support. Use a
+# bounded range to allow the resolver to select the latest compatible release in CI.
+docling>=2,<3
+# Keep docling-parse in lockstep with Docling to ensure pipeline compatibility and
+# stable Docker builds under verbose logging.
+docling-parse>=2,<3
 sentence-transformers==3.0.1
 python-dotenv==1.0.1
-deepsearch-toolkit
+# Pin within the 2.x line to match Docling 2.x dependency expectations and avoid
+# backtracking with urllib3/certifi constraints.
+deepsearch-toolkit>=2,<3

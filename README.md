@@ -150,7 +150,7 @@ rag-sandbox/
 ## Logging and Observability
 - Logs are written to stdout and mirrored to `data/logs/app.log`; inspect with `docker logs mq-rag` or by reading the file from the mounted volume.
 - Verbose logging is enabled by default (`LOG_LEVEL=DEBUG` via docker compose); lower to `INFO` if you want quieter output once the system is stable.
-- Python 3.11 builders should rebuild after pulling updates: Docling is pinned to `1.7.1`, `docling-parse` is locked at `1.6.2`, and `deepsearch-toolkit` is included to satisfy Docling's Deep Search dependency during PDF ingestion.
+- Python 3.11 builders should rebuild after pulling updates: Docling and Docling-Parse now track the latest `2.x` releases (bounded in `requirements.txt`), and `deepsearch-toolkit` is pinned within `2.x` to satisfy Docling's Deep Search dependency during PDF ingestion.
 
 ## Troubleshooting and Debugging
 - **Import errors (e.g., `ModuleNotFoundError: No module named 'app'`)**: Always run the service as a module so Python resolves the `app` package correctly. Use `python -m app.main` locally or keep the default container command.
