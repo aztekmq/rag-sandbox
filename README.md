@@ -85,6 +85,16 @@ Because instead of making stuff up, the robot uses **real information** it just 
    LOG_LEVEL=DEBUG
    ```
 
+### Embedding model (offline friendly)
+
+The sentence-transformer embedder is configured to run offline by default so the
+container will not attempt to reach Hugging Face. Download the
+`Snowflake/snowflake-arctic-embed-xs` model manually and place it under
+`data/models/snowflake-arctic-embed-xs` (or point `EMBEDDING_MODEL_DIR` to your
+preferred location). If you do want the container to fetch models over the
+internet, explicitly set `ALLOW_HF_INTERNET=true` and optionally override
+`EMBEDDING_MODEL_ID` with the repository name.
+
 4. **Build and run via Docker Compose**
    ```bash
    docker compose up -d --build

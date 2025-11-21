@@ -5,7 +5,9 @@ environment variables while keeping sensible defaults for local testing. All
 values are designed to be safe for production when secrets are provided through
 a `.env` file or Docker environment variables. The configuration follows the
 International Programming Standards for documentation and readability so that
-operators can audit and tune runtime parameters with confidence.
+operators can audit and tune runtime parameters with confidence. Verbose logging
+and explicit offline controls are enabled by default to aid debugging and avoid
+unexpected network calls on isolated hosts.
 """
 
 from __future__ import annotations
@@ -19,11 +21,27 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Enforce offline defaults for Hugging Face backed libraries unless explicitly
+# overridden. This prevents containers from attempting to reach external
+# services during local or air-gapped deployments.
+ALLOW_HF_INTERNET: Final[bool] = (
+    os.getenv("ALLOW_HF_INTERNET", "false").strip().lower() == "true"
+)
+if not ALLOW_HF_INTERNET:
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 BASE_DIR: Final[Path] = Path(__file__).resolve().parent.parent
 DATA_DIR: Final[Path] = BASE_DIR / "data"
 PDF_DIR: Final[Path] = DATA_DIR / "pdfs"
 CHROMA_DIR: Final[Path] = DATA_DIR / "chroma_db"
 LOG_DIR: Final[Path] = DATA_DIR / "logs"
+EMBEDDING_MODEL_DIR: Final[Path] = Path(
+    os.getenv("EMBEDDING_MODEL_DIR", DATA_DIR / "models" / "snowflake-arctic-embed-xs")
+)
+EMBEDDING_MODEL_ID: Final[str] = os.getenv(
+    "EMBEDDING_MODEL_ID", "Snowflake/snowflake-arctic-embed-xs"
+)
 
 ADMIN_USER: Final[str] = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASS: Final[str] = os.getenv("ADMIN_PASSWORD", "change_me_strong_password")
@@ -38,7 +56,7 @@ SHARE_INTERFACE: Final[bool] = os.getenv("SHARE_INTERFACE", "true").lower() == "
 LOG_LEVEL: Final[str] = os.getenv("LOG_LEVEL", "DEBUG")
 LOG_FORMAT: Final[str] = "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
 
-for directory in (DATA_DIR, PDF_DIR, CHROMA_DIR, LOG_DIR):
+for directory in (DATA_DIR, PDF_DIR, CHROMA_DIR, LOG_DIR, EMBEDDING_MODEL_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 log_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
