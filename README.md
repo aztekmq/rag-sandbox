@@ -2,6 +2,58 @@
 
 A single-container, production-ready Retrieval Augmented Generation (RAG) sandbox for IBM MQ documentation. The stack is built for 2025 best practices: llama.cpp inference with Llama-3.1-8B-Instruct Q5_K_M GGUF, Gradio 4 for a clean WebUI, Chroma persistence, Docling PDF parsing, and Snowflake Arctic embeddings. Everything runs fully offline—no external API calls once models are downloaded.
 
+## RAG in Plain Language
+
+Here’s **Retrieval Augmented Generation (RAG)** explained like you’re in **8th grade**:
+
+---
+
+### 🔍 **What is RAG? (Simple Explanation)**
+
+Imagine you ask a super-smart robot a question. But sometimes the robot doesn't *remember* everything. So instead of guessing, the robot goes to look things up **right when you ask**.
+
+RAG is basically the robot doing two steps:
+
+---
+
+### **1️⃣ Retrieval — “Let me go look that up.”**
+
+The robot searches through a big collection of documents, files, or notes to find the most helpful information. It’s like Googling, but inside the robot’s brain.
+
+---
+
+### **2️⃣ Generation — “Now I’ll explain it to you.”**
+
+After finding the info, the robot reads it and then writes a clear, helpful answer in its own words.
+
+---
+
+### 🧠 **Why is this useful?**
+
+Because instead of making stuff up, the robot uses **real information** it just found. So answers are:
+
+* more accurate
+* more detailed
+* based on real sources
+* less likely to be wrong
+
+---
+
+### 💬 **Example**
+
+**You ask:** *“What were the main causes of the Civil War?”*
+**The robot:**
+
+1. Searches your history textbook and notes.
+2. Finds the paragraphs about slavery, states’ rights, and economics.
+3. Writes an easy-to-understand answer using what it found.
+
+---
+
+### 📦 **In short:**
+
+**RAG = Search + Explain** — a robot that first *looks things up* and then *gives you a smart answer.*
+
 ## Features
 - **Admin mode**: upload IBM MQ PDFs, re-index, delete documents, view verbose logs, manage the knowledge base.
 - **User mode**: simple chat interface with no upload rights.
