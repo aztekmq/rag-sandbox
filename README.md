@@ -82,7 +82,7 @@ Because instead of making stuff up, the robot uses **real information** it just 
    USER_USERNAME=user
    USER_PASSWORD=mquser2025
    MODEL_PATH=/app/models/llama-3.1-8b-instruct-q5_k_m.gguf
-   LOG_LEVEL=INFO
+   LOG_LEVEL=DEBUG
    ```
 
 4. **Build and run via Docker Compose**
@@ -137,6 +137,14 @@ rag-sandbox/
 - Verbose logging is enabled by default (`LOG_LEVEL=DEBUG` via docker compose); lower to `INFO` if you want quieter output once the system is stable.
 - Python 3.11 builders should rebuild after pulling updates: Docling is pinned to `1.7.2` and `docling-parse` is locked at `4.7.1` to pull compatible parser wheels and avoid installation errors.
 
+## Troubleshooting and Debugging
+- **Import errors (e.g., `ModuleNotFoundError: No module named 'app'`)**: Always run the service as a module so Python resolves the `app` package correctly. Use `python -m app.main` locally or keep the default container command.
+- **Enable/adjust verbosity**: Set `LOG_LEVEL=DEBUG` (default) for detailed tracing in both stdout and `data/logs/app.log`. If troubleshooting noisy dependencies, briefly bump to `INFO`, then revert to `DEBUG` to retain rich context.
+- **Validate environment variables**: Run `printenv | sort` inside the container to confirm credentials, `MODEL_PATH`, and logging settings are present. Missing values often lead to authentication failures or model loading errors.
+- **Check persisted artifacts**: Confirm `/app/data/pdfs` and `/app/data/chroma_db` are mounted. Empty mounts can explain missing documents or retrieval mismatches.
+- **Reset vector store**: If responses seem stale after PDF changes, remove `data/chroma_db` and re-run ingestion from the admin panel to rebuild embeddings.
+- **Tail logs while reproducing**: Use `docker compose logs -f rag-sandbox` during reproduction so warnings and stack traces remain time-correlated with UI actions.
+
 ## Notes and Best Practices
 - The container runs entirely offline after the initial model download.
 - Ensure adequate CPU/RAM for the 8B model; adjust `MODEL_THREADS` and `MODEL_N_CTX` via environment variables if needed.
@@ -148,7 +156,7 @@ Install dependencies locally (Python 3.11 recommended):
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python app/main.py
+python -m app.main
 ```
 
 ## Security
