@@ -11,6 +11,7 @@ states.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
 from typing import Tuple
@@ -174,7 +175,14 @@ def _monkeypatch_gradio_api_info() -> None:
             return "bool" if schema else "null"
 
         try:
-            return original_schema_to_type(schema, defs)
+            signature = inspect.signature(original_schema_to_type)
+            accepts_defs = len(signature.parameters) > 1
+            logger.debug(
+                "Resolved json_schema_to_python_type signature with defs support: %s", accepts_defs
+            )
+            if accepts_defs:
+                return original_schema_to_type(schema, defs)
+            return original_schema_to_type(schema)
         except TypeError:
             logger.exception(
                 "Encountered non-iterable schema fragment; substituting unknown type for resilience"
