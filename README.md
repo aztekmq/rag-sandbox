@@ -2,10 +2,6 @@
 
 A single-container, production-ready Retrieval Augmented Generation (RAG) sandbox for IBM MQ documentation. The stack is built for 2025 best practices: llama.cpp inference with Llama-3.1-8B-Instruct Q5_K_M GGUF, Gradio 4 for a clean WebUI, Chroma persistence, PyPDFium parsing, and Snowflake Arctic embeddings. Everything runs fully offline—no external API calls once models are downloaded.
 
-## RAG in Plain Language
-
-Here’s **Retrieval Augmented Generation (RAG)** explained like you’re in **8th grade**:
-
 ---
 
 ### 🔍 **What is RAG? (Simple Explanation)**
