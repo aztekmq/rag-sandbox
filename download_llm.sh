@@ -1,0 +1,1 @@
+wget -O models/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf   https://huggingface.co/QuantFactory/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf
