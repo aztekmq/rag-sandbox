@@ -15,6 +15,8 @@ import logging
 from functools import lru_cache
 from typing import Iterable, List
 
+from pathlib import Path
+
 from sentence_transformers import SentenceTransformer
 
 from app.config import ALLOW_HF_INTERNET, EMBEDDING_MODEL_DIR, EMBEDDING_MODEL_ID
@@ -31,6 +33,18 @@ def get_embedder() -> SentenceTransformer:
     logger.info(
         "Loading embedding model: %s (offline=%s)", MODEL_NAME, not ALLOW_HF_INTERNET
     )
+
+    # Avoid unexpected Hugging Face calls by requiring the assets to exist
+    # locally when offline defaults are in effect. This early guard makes the
+    # failure mode explicit and keeps the loader from attempting network
+    # resolution through the hub libraries.
+    model_path = Path(MODEL_NAME)
+    if not ALLOW_HF_INTERNET and not model_path.exists():
+        raise FileNotFoundError(
+            f"Embedding model directory '{model_path}' is missing. Place the"
+            f" downloaded assets under '{EMBEDDING_MODEL_DIR}' or set"
+            " ALLOW_HF_INTERNET=true to permit a one-time download."
+        )
     try:
         model = SentenceTransformer(
             MODEL_NAME,
