@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import List, Tuple
 
@@ -44,17 +43,13 @@ class RagEngine:
             )
             raise ModelPathError(model_path)
 
-        os.environ.setdefault("CHROMA_PRODUCT_TELEMETRY_IMPL", "noop")
-        os.environ.setdefault("CHROMA_TELEMETRY_IMPL", "noop")
-        logger.debug("Chroma telemetry disabled via environment overrides for offline-friendly operation")
         logger.info("Initializing RAG engine with model at %s", model_path)
+        logger.debug("Configuring Chroma client with telemetry disabled via Settings")
 
         self.client = chromadb.PersistentClient(
             path=str(CHROMA_DIR),
             settings=Settings(
                 anonymized_telemetry=False,
-                chroma_product_telemetry_impl="noop",
-                chroma_telemetry_impl="noop",
             ),
         )
         self.collection = self.client.get_or_create_collection(
