@@ -6,8 +6,9 @@
 
 set -euo pipefail
 
+# Emit verbose, timestamped logs for every significant action to simplify
+# debugging in heterogeneous environments.
 log() {
-  # Consistent, timestamped logging to aid debugging in any environment.
   printf '%s [INFO] %s\n' "$(date -Iseconds)" "$*"
 }
 
@@ -19,6 +20,7 @@ error() {
 # environment variables for custom deployments.
 : "${EMBEDDING_MODEL_ID:=Snowflake/snowflake-arctic-embed-xs}"
 : "${EMBEDDING_MODEL_DIR:=data/models/snowflake-arctic-embed-xs}"
+export EMBEDDING_MODEL_ID EMBEDDING_MODEL_DIR
 
 # Validate dependencies early with explicit guidance.
 if ! command -v python >/dev/null 2>&1; then
@@ -26,17 +28,34 @@ if ! command -v python >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! python - <<'PY' >/dev/null 2>&1
+import importlib.util
+import sys
+
+module_missing = importlib.util.find_spec("huggingface_hub") is None
+sys.exit(1 if module_missing else 0)
+PY
+then
+  log "Python package 'huggingface_hub' is missing; installing with 'python -m pip install --upgrade huggingface-hub'."
+  if ! python -m pip install --upgrade --quiet huggingface-hub; then
+    error "Failed to install 'huggingface-hub'. Ensure internet connectivity and pip permissions, then rerun."
+    exit 1
+  fi
+  log "Dependency 'huggingface_hub' installed successfully."
+fi
+
 log "Preparing to download embedding model '${EMBEDDING_MODEL_ID}' into '${EMBEDDING_MODEL_DIR}'"
 mkdir -p "${EMBEDDING_MODEL_DIR}"
 
-python - <<'PY'
+python - <<PY
 from __future__ import annotations
+import os
 import sys
 from pathlib import Path
 from huggingface_hub import snapshot_download
 
-model_id = Path("${EMBEDDING_MODEL_ID}")
-model_dir = Path("${EMBEDDING_MODEL_DIR}")
+model_id = Path(os.environ["EMBEDDING_MODEL_ID"])
+model_dir = Path(os.environ["EMBEDDING_MODEL_DIR"])
 
 print(f"Downloading embedding model '{model_id}' to '{model_dir}' with verbose logging...")
 try:
@@ -49,7 +68,8 @@ try:
 except Exception as exc:  # noqa: BLE001
     print(
         "Failed to download embeddings. Verify internet connectivity, Hugging Face",
-        "credentials (if required), and repository spelling. Error: {exc}",
+        "credentials (if required), and repository spelling. Error:",
+        exc,
         sep="\n",
         file=sys.stderr,
     )
