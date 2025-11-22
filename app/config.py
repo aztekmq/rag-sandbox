@@ -47,12 +47,12 @@ DEFAULT_MODEL_PATH: Final[Path] = (
 EMBEDDING_MODEL_DIR: Final[Path] = Path(
     os.getenv("EMBEDDING_MODEL_DIR", DATA_DIR / "models" / "snowflake-arctic-embed-xs")
 )
-# Default to the on-disk directory instead of a remote model repo to avoid any
-# Hugging Face lookups when running in offline mode. Operators who want to
-# download from Hugging Face can set ``EMBEDDING_MODEL_ID`` to a repository path
-# and ``ALLOW_HF_INTERNET=true`` explicitly.
+# Default to the public repository ID so the embedding model can be downloaded
+# automatically when internet access is explicitly allowed. When running fully
+# offline, the assets must be present under ``EMBEDDING_MODEL_DIR`` in the
+# standard Hugging Face layout with a ``config.json`` file at the root.
 EMBEDDING_MODEL_ID: Final[str] = os.getenv(
-    "EMBEDDING_MODEL_ID", str(EMBEDDING_MODEL_DIR)
+    "EMBEDDING_MODEL_ID", "Snowflake/snowflake-arctic-embed-xs"
 )
 
 ADMIN_USER: Final[str] = os.getenv("ADMIN_USERNAME", "admin")

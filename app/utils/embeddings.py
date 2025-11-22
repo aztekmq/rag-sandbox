@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Iterable, List
 
-from pathlib import Path
-
+from huggingface_hub import snapshot_download
 from sentence_transformers import SentenceTransformer
 
 from app.config import ALLOW_HF_INTERNET, EMBEDDING_MODEL_DIR, EMBEDDING_MODEL_ID
@@ -24,6 +24,34 @@ from app.config import ALLOW_HF_INTERNET, EMBEDDING_MODEL_DIR, EMBEDDING_MODEL_I
 logger = logging.getLogger(__name__)
 
 MODEL_NAME = EMBEDDING_MODEL_ID
+
+
+def _ensure_local_assets(model_path: Path) -> Path:
+    """Guarantee that the embedding assets exist on disk with verbose logging."""
+
+    config_file = model_path / "config.json"
+    if config_file.exists():
+        logger.debug("Found embedding config at %s", config_file)
+        return model_path
+
+    if not ALLOW_HF_INTERNET:
+        raise FileNotFoundError(
+            "Embedding assets are missing locally and internet downloads are disabled. "
+            f"Place the Snowflake Arctic model under '{model_path}' with its config.json "
+            "or set ALLOW_HF_INTERNET=true to fetch it automatically."
+        )
+
+    logger.warning(
+        "Embedding assets not found at %s; downloading %s with snapshot_download", model_path, MODEL_NAME
+    )
+    download_target = snapshot_download(
+        repo_id=MODEL_NAME,
+        local_dir=str(model_path),
+        local_dir_use_symlinks=False,
+        cache_dir=str(model_path),
+    )
+    logger.info("Embedding model downloaded to %s", download_target)
+    return model_path
 
 
 @lru_cache(maxsize=1)
@@ -35,19 +63,12 @@ def get_embedder() -> SentenceTransformer:
     )
 
     # Avoid unexpected Hugging Face calls by requiring the assets to exist
-    # locally when offline defaults are in effect. This early guard makes the
-    # failure mode explicit and keeps the loader from attempting network
-    # resolution through the hub libraries.
-    model_path = Path(MODEL_NAME)
-    if not ALLOW_HF_INTERNET and not model_path.exists():
-        raise FileNotFoundError(
-            f"Embedding model directory '{model_path}' is missing. Place the"
-            f" downloaded assets under '{EMBEDDING_MODEL_DIR}' or set"
-            " ALLOW_HF_INTERNET=true to permit a one-time download."
-        )
+    # locally when offline defaults are in effect. If the deployment allows
+    # internet access, fetch the model proactively to keep behavior explicit.
+    model_path = _ensure_local_assets(EMBEDDING_MODEL_DIR)
     try:
         model = SentenceTransformer(
-            MODEL_NAME,
+            str(model_path),
             cache_folder=str(EMBEDDING_MODEL_DIR),
             local_files_only=not ALLOW_HF_INTERNET,
         )

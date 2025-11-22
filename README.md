@@ -102,12 +102,13 @@ The sentence-transformer embedder is configured to run offline by default so the
 container will not attempt to reach Hugging Face. Download the
 `Snowflake/snowflake-arctic-embed-xs` model manually and place it under
 `data/models/snowflake-arctic-embed-xs` (or point `EMBEDDING_MODEL_DIR` to your
-preferred location). If you do want the container to fetch models over the
-internet, explicitly set `ALLOW_HF_INTERNET=true` and optionally override
-`EMBEDDING_MODEL_ID` with the repository name. Public Gradio share links are
-disabled by default (`SHARE_INTERFACE=false`) to keep the UI local-only; enable
-them only when the host has outbound connectivity by setting both
-`ALLOW_HF_INTERNET=true` and `SHARE_INTERFACE=true`.
+preferred location). If the assets are missing and you allow internet access,
+set `ALLOW_HF_INTERNET=true` and optionally override `EMBEDDING_MODEL_ID` with a
+different repository name (the default ID already points at the Snowflake
+embedding repo). Public Gradio share links are disabled by default
+(`SHARE_INTERFACE=false`) to keep the UI local-only; enable them only when the
+host has outbound connectivity by setting both `ALLOW_HF_INTERNET=true` and
+`SHARE_INTERFACE=true`.
 
 4. **Build and run via Docker Compose**
    ```bash
