@@ -1,6 +1,6 @@
 # RAG Sandbox (IBM MQ)
 
-A single-container, production-ready Retrieval Augmented Generation (RAG) sandbox for IBM MQ documentation. The stack is built for 2025 best practices: llama.cpp inference with Llama-3.1-8B-Instruct Q5_K_M GGUF, Gradio 4 for a clean WebUI, Chroma persistence, Docling PDF parsing, and Snowflake Arctic embeddings. Everything runs fully offline—no external API calls once models are downloaded.
+A single-container, production-ready Retrieval Augmented Generation (RAG) sandbox for IBM MQ documentation. The stack is built for 2025 best practices: llama.cpp inference with Llama-3.1-8B-Instruct Q5_K_M GGUF, Gradio 4 for a clean WebUI, Chroma persistence, PyPDFium parsing, and Snowflake Arctic embeddings. Everything runs fully offline—no external API calls once models are downloaded.
 
 ## RAG in Plain Language
 
@@ -60,37 +60,58 @@ Because instead of making stuff up, the robot uses **real information** it just 
 - **Offline-first**: CPU/GPU llama.cpp backend and local embeddings keep data private.
 - **Persistent storage**: PDFs, Chroma DB, and logs survive container restarts.
 
-## Quickstart
+## Default local RAG components
+All core components are local-first with verbose logging enabled by default so you can trace behavior easily:
+
+- **Language model**: `Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf` served through `llama.cpp` (configurable via `MODEL_PATH`).
+- **Embedding model**: `Snowflake/snowflake-arctic-embed-xs` loaded locally via `sentence-transformers` (configurable with `EMBEDDING_MODEL_ID` and `EMBEDDING_MODEL_DIR`).
+- **Vector store**: Chroma persistent client stored under `data/chroma_db`.
+- **PDF ingestion**: `pypdfium2` text extraction with 1,000-character chunks and 200-character overlap.
+- **Interface**: Gradio 4, single-container deployment.
+- **Logging**: `LOG_LEVEL=DEBUG` by default, mirrored to stdout and `data/logs/app.log` for audit-friendly diagnostics.
+
+## Quickstart (run these before `./launch.sh`)
 1. **Clone and enter the repo**
    ```bash
    git clone https://github.com/yourname/rag-sandbox.git
    cd rag-sandbox
    ```
 
-2. **Download the model (once, large download)**
+2. **Prepare local folders for persistence**
    ```bash
-   mkdir -p models
-   wget -O models/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf \
-     https://huggingface.co/QuantFactory/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf
+   mkdir -p models data
    ```
-   The filename on Hugging Face is case-sensitive; using the hyphenated variant
-   will return `404 Not Found`.
+   These mirror the container mounts at `/app/models` and `/app/data` so models, Chroma indexes, and verbose logs persist between runs.
 
-3. **Set credentials and model path**
-   Create `.env` (ignored by git):
+3. **Download the llama.cpp model (one-time, large download)**
+   Use the bundled helper to avoid typos and keep logging verbose:
+   ```bash
+   ./download_llm.sh
+   ```
+   The script saves `Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf` into `models/`. The filename is case-sensitive; altering it will return `404 Not Found`.
+
+4. **(Optional but recommended for offline use) Download embeddings locally**
+   ```bash
+   ./scripts/download_embedding.sh
+   ```
+   This installs `huggingface_hub` if missing, then downloads `Snowflake/snowflake-arctic-embed-xs` into `data/models/snowflake-arctic-embed-xs` so embedding calls never reach the internet.
+
+5. **Set credentials, paths, and logging defaults**
+   Create `.env` (ignored by git) so Docker Compose and the app share consistent defaults:
    ```env
    ADMIN_USERNAME=admin
    ADMIN_PASSWORD=change_me_strong_password
    USER_USERNAME=user
    USER_PASSWORD=mquser2025
    MODEL_PATH=/app/models/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf
+   ALLOW_HF_INTERNET=false
+   EMBEDDING_MODEL_ID=Snowflake/snowflake-arctic-embed-xs
+   EMBEDDING_MODEL_DIR=/app/data/models/snowflake-arctic-embed-xs
    LOG_LEVEL=DEBUG
    SHARE_INTERFACE=false
    ```
 
-   The `MODEL_PATH` value must point to the exact GGUF file *inside* the
-   container. When running with Docker, mount your downloaded model into
-   `/app/models` and confirm the path with:
+   The `MODEL_PATH` value must point to the exact GGUF file *inside* the container. When running with Docker, mount your downloaded model into `/app/models` and confirm the path with:
    ```bash
    docker exec -it mq-rag ls -l /app/models
    docker exec -it mq-rag printenv MODEL_PATH
@@ -101,21 +122,15 @@ Because instead of making stuff up, the robot uses **real information** it just 
 The sentence-transformer embedder is configured to run offline by default so the
 container will not attempt to reach Hugging Face. You have two options:
 
-1. **Allow one-time download with internet access**
-   - Set `ALLOW_HF_INTERNET=true` in your `.env` (or when invoking Docker Compose).
-   - Start the stack and the container will download
-     `Snowflake/snowflake-arctic-embed-xs` into `/app/data/models/snowflake-arctic-embed-xs`.
-   - The volume mounted at `./data` keeps the downloaded assets for future
-     offline runs.
+- **Allow one-time download with internet access**: Set `ALLOW_HF_INTERNET=true`
+  in your `.env` and start the stack. The container downloads
+  `Snowflake/snowflake-arctic-embed-xs` into `/app/data/models/snowflake-arctic-embed-xs`.
+  The mounted `./data` volume keeps the assets for future offline runs.
 
-2. **Pre-download the embedding assets manually** (no internet required later)
-   - Run the helper script with internet access:
-     ```bash
-     ./scripts/download_embedding.sh
-     ```
-   - The assets land in `data/models/snowflake-arctic-embed-xs`. Mount this
-     directory into `/app/data/models/snowflake-arctic-embed-xs` for the
-     container (the default Compose file already mounts `./data`).
+- **Pre-download the embedding assets manually** (no internet required later):
+  run `./scripts/download_embedding.sh` from the project root. The assets land
+  in `data/models/snowflake-arctic-embed-xs` and are mounted automatically into
+  `/app/data/models/snowflake-arctic-embed-xs` via Docker Compose.
 
 If you want to use a different embedding repository, set
 `EMBEDDING_MODEL_ID=org/repo-name` and optionally `EMBEDDING_MODEL_DIR` to a
@@ -124,15 +139,21 @@ custom path. Public Gradio share links are disabled by default
 host has outbound connectivity by setting both `ALLOW_HF_INTERNET=true` and
 `SHARE_INTERFACE=true`.
 
-4. **Build and run via Docker Compose**
-   ```bash
-   docker compose up -d --build
-   ```
-   The app listens on http://localhost:7860.
+### Launch the stack with verbose logging
 
-5. **Login**
-   - User mode → `user` / `mquser2025`
-   - Admin mode → `admin` / your password
+Run the Compose helper once all setup steps are complete:
+
+```bash
+./launch.sh
+```
+
+`launch.sh` uses an isolated Docker config and `BUILDKIT_PROGRESS=plain` to keep
+image pulls and build output verbose for easier debugging. The app listens on
+http://localhost:7860 once healthy.
+
+### Login defaults
+- User mode → `user` / `mquser2025`
+- Admin mode → `admin` / your password
 
 ## Manual Docker build (optional)
 ```bash
@@ -174,7 +195,7 @@ rag-sandbox/
 │   ├── assets/
 │   │   └── custom.css        # Simple theming
 │   └── utils/
-│       ├── pdf_ingest.py     # Docling PDF parsing + chunking
+│       ├── pdf_ingest.py     # PyPDFium text extraction + chunking
 │       └── embeddings.py     # Snowflake Arctic embeddings
 ├── data/                     # PDFs, Chroma DB, logs (mounted volume)
 ├── models/                   # GGUF model download target (mounted volume)
@@ -189,11 +210,11 @@ rag-sandbox/
 ## Logging and Observability
 - Logs are written to stdout and mirrored to `data/logs/app.log`; inspect with `docker logs mq-rag` or by reading the file from the mounted volume.
 - Verbose logging is enabled by default (`LOG_LEVEL=DEBUG` via docker compose); lower to `INFO` if you want quieter output once the system is stable.
-- Python 3.11 builders should rebuild after pulling updates: Docling and Docling-Parse now track the latest `2.x` releases (bounded in `requirements.txt`), and `deepsearch-toolkit` is pinned within `2.x` to satisfy Docling's Deep Search dependency during PDF ingestion.
+- If you upgrade dependencies, rebuild the container or virtual environment to ensure `pypdfium2`, `sentence-transformers`, and `llama-cpp-python` remain in sync with your platform.
 
 ## Troubleshooting and Debugging
 - **Import errors (e.g., `ModuleNotFoundError: No module named 'app'`)**: Always run the service as a module so Python resolves the `app` package correctly. Use `python -m app.main` locally or keep the default container command.
-- **Docling Deep Search dependency**: If you see `ImportError: To use the Deep Search capabilities...`, reinstall requirements to ensure `deepsearch-toolkit` is present (`pip install -r requirements.txt`). This dependency is required for Docling's PDF ingestion pipeline.
+- **Embedding assets missing**: Ensure `data/models/snowflake-arctic-embed-xs` exists or set `ALLOW_HF_INTERNET=true` to let the container download the model.
 - **Enable/adjust verbosity**: Set `LOG_LEVEL=DEBUG` (default) for detailed tracing in both stdout and `data/logs/app.log`. If troubleshooting noisy dependencies, briefly bump to `INFO`, then revert to `DEBUG` to retain rich context.
 - **Validate environment variables**: Run `printenv | sort` inside the container to confirm credentials, `MODEL_PATH`, and logging settings are present. Missing values often lead to authentication failures or model loading errors.
 - **Check persisted artifacts**: Confirm `/app/data/pdfs` and `/app/data/chroma_db` are mounted. Empty mounts can explain missing documents or retrieval mismatches.
