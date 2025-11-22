@@ -15,16 +15,34 @@ from app.utils.embeddings import embed_documents, embed_query
 from app.utils.pdf_ingest import ingest_pdf_files
 
 logger = logging.getLogger(__name__)
+# Suppress noisy telemetry errors from upstream dependencies while retaining
+# detailed application-level logs for debugging.
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
+logger.debug("Chromadb telemetry loggers set to CRITICAL to avoid noisy stack traces")
 
 
 class ModelPathError(FileNotFoundError):
-    """Raised when the configured MODEL_PATH is missing or invalid."""
+    """Raised when the configured MODEL_PATH is missing."""
 
     def __init__(self, model_path: Path):
         super().__init__(
             f"Model path does not exist: {model_path}. Download the GGUF to this location or set MODEL_PATH to an existing file."
         )
         self.model_path = model_path
+
+
+class ModelValidationError(ValueError):
+    """Raised when the configured MODEL_PATH exists but is not a valid GGUF file."""
+
+    def __init__(self, model_path: Path, detail: str):
+        message = (
+            "The model file is present but appears corrupted or incompatible. "
+            f"{detail}"
+        )
+        super().__init__(message)
+        self.model_path = model_path
+        self.detail = detail
 
 
 class RagEngine:
@@ -42,6 +60,8 @@ class RagEngine:
                 model_path,
             )
             raise ModelPathError(model_path)
+
+        self._validate_model_file(model_path)
 
         logger.info("Initializing RAG engine with model at %s", model_path)
         logger.debug("Configuring Chroma client with telemetry disabled via Settings")
@@ -62,6 +82,44 @@ class RagEngine:
             verbose=True,
         )
         logger.info("RAG engine ready")
+
+    @staticmethod
+    def _validate_model_file(model_path: Path) -> None:
+        """Ensure the configured GGUF model exists and contains the expected header.
+
+        The llama.cpp loader emits opaque errors when presented with an empty or
+        non-GGUF file. This proactive check inspects the file size and first
+        bytes to confirm the ``GGUF`` magic signature, logging verbose context
+        for operators and raising :class:`ModelValidationError` with actionable
+        remediation guidance when the file appears corrupted.
+        """
+
+        logger.debug("Validating GGUF model integrity at %s", model_path)
+
+        if model_path.suffix.lower() != ".gguf":
+            detail = "Expected a .gguf extension; please provide a valid GGUF model file."
+            logger.error(detail)
+            raise ModelValidationError(model_path, detail)
+
+        minimum_size_bytes = 1024
+        file_size = model_path.stat().st_size
+        logger.debug("Model file size: %d bytes", file_size)
+        if file_size < minimum_size_bytes:
+            detail = (
+                f"File is too small ({file_size} bytes). Download the complete GGUF artifact before retrying."
+            )
+            logger.error(detail)
+            raise ModelValidationError(model_path, detail)
+
+        with model_path.open("rb") as handle:
+            header = handle.read(4)
+
+        if header != b"GGUF":
+            detail = "Missing GGUF magic header; the file may be corrupted or an incorrect download."
+            logger.error(detail)
+            raise ModelValidationError(model_path, detail)
+
+        logger.info("Model file %s passed GGUF validation", model_path)
 
     def ingest(self, chunk_size: int = 1200, chunk_overlap: int = 200) -> str:
         pdf_paths = list(Path(PDF_DIR).glob("*.pdf"))
@@ -182,6 +240,15 @@ def _safe_get_engine() -> Tuple[RagEngine | None, str]:
         return None, (
             "The language model file is missing. Please download the GGUF to "
             f"{MODEL_PATH} or set MODEL_PATH to an existing file before retrying."
+        )
+    except ModelValidationError as exc:
+        logger.exception(
+            "RAG engine initialization failed because the GGUF file is invalid: %s",
+            exc.detail,
+        )
+        return None, (
+            "The language model file is present but invalid. Re-download the GGUF to "
+            f"{MODEL_PATH} and try again. Details: {exc.detail}"
         )
     except Exception:
         logger.exception("Unexpected failure while preparing the RAG engine")
