@@ -130,7 +130,21 @@ class RagEngine:
             logger.warning("No chunks produced during ingestion")
             return "No PDFs found to ingest."
 
-        embeddings = embed_documents(chunks)
+        try:
+            embeddings = embed_documents(chunks)
+        except FileNotFoundError as exc:
+            logger.exception(
+                "Embedding model assets missing; ensure offline bundle exists or enable internet downloads"
+            )
+            return (
+                "Embedding assets are missing for the Snowflake Arctic model. "
+                "Place the model files under the configured EMBEDDING_MODEL_DIR or set "
+                "ALLOW_HF_INTERNET=true to allow automatic downloads."
+            )
+        except Exception:
+            logger.exception("Unexpected failure while generating embeddings during ingestion")
+            return "Embedding failed due to an unexpected error. Check logs for details."
+
         ids = [f"chunk-{i}" for i in range(len(chunks))]
         self.collection.upsert(ids=ids, embeddings=embeddings, documents=chunks, metadatas=metadata)
         logger.info("Ingested %d chunks into vector store", len(chunks))
