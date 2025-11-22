@@ -393,7 +393,13 @@ def build_ui() -> gr.Blocks:
                         elem_classes=["muted"],
                     )
                     with gr.Row():
-                        doc_list = gr.Dropdown(choices=[], label="Active Documents", interactive=True, elem_classes=["text-input"])
+                        doc_list = gr.Dropdown(
+                            choices=[],
+                            value=None,
+                            label="Active Documents",
+                            interactive=True,
+                            elem_classes=["text-input"],
+                        )
                         refresh_btn = gr.Button("Refresh Library", elem_classes=["ghost-btn"])
                     library_overview = gr.Markdown(elem_classes=["status-bar"])
                     with gr.Row():
