@@ -151,13 +151,14 @@ def show_admin_controls(role_str: str):
 
     is_admin = "admin" in (role_str or "").lower()
     documents = refresh_documents() if is_admin else []
+    selected_doc = documents[0] if documents else None
     logger.debug("Setting admin control visibility: %s", is_admin)
     overview_text = _render_library_overview(documents)
     return [
         gr.update(visible=is_admin),
         gr.update(visible=is_admin),
         gr.update(visible=is_admin),
-        gr.update(visible=is_admin, choices=documents),
+        gr.update(visible=is_admin, choices=documents, value=selected_doc),
         gr.update(visible=is_admin),
         gr.update(visible=is_admin, value=overview_text),
     ]
@@ -171,12 +172,47 @@ def refresh_documents() -> list[str]:
     return docs
 
 
+def refresh_library(status: str | None = None) -> tuple[gr.update, str]:
+    """Return an updated document dropdown alongside a formatted overview.
+
+    The function is designed for Gradio event callbacks so that ingest, delete,
+    and manual refresh actions all hydrate the "Document Studio" tab with a
+    consistent snapshot of the active PDFs. It optionally prepends a
+    human-readable status to the overview when ``status`` is supplied.
+    """
+
+    docs = refresh_documents()
+    default_choice = docs[0] if docs else None
+    overview = _render_library_overview(docs)
+    if status:
+        overview = f"{status}\n\n{overview}"
+
+    logger.debug(
+        "Library state prepared with %d documents (default=%s)", len(docs), default_choice
+    )
+    return gr.update(choices=docs, value=default_choice), overview
+
+
 def handle_delete(doc: str) -> str:
     """Remove a document and its chunks from the vector store."""
 
     if not doc:
         return "Select a document to delete."
     return delete_document(doc)
+
+
+def delete_and_refresh(doc: str) -> tuple[gr.update, str]:
+    """Delete a document and refresh the library snapshot for the UI."""
+
+    status = handle_delete(doc)
+    return refresh_library(status)
+
+
+def ingest_and_refresh(files: list[gr.File | str | Path] | None) -> tuple[gr.update, str]:
+    """Upload PDFs, trigger indexing, and rehydrate the document dropdown."""
+
+    status = upload_and_index(files)
+    return refresh_library(status)
 
 
 def respond(message: str, history: list[list[str]], role_str: str):
@@ -392,26 +428,36 @@ def build_ui() -> gr.Blocks:
                         "Administer the localized corpus: review, ingest, or prune documents powering the RAG pipeline.",
                         elem_classes=["muted"],
                     )
-                    with gr.Row():
-                        doc_list = gr.Dropdown(
-                            choices=[],
-                            value=None,
-                            label="Active Documents",
-                            interactive=True,
-                            elem_classes=["text-input"],
-                        )
-                        refresh_btn = gr.Button("Refresh Library", elem_classes=["ghost-btn"])
-                    library_overview = gr.Markdown(elem_classes=["status-bar"])
-                    with gr.Row():
-                        file_upload = gr.File(
-                            label="Upload IBM MQ PDFs",
-                            file_count="multiple",
-                            file_types=[".pdf"],
-                            type="filepath",
-                            interactive=True,
-                        )
-                        index_btn = gr.Button("Ingest PDFs", elem_classes=["primary-btn"])
-                        delete_btn = gr.Button("Delete Selected", elem_classes=["danger-btn"])
+                    with gr.Row(elem_classes=["doc-studio-grid"]):
+                        with gr.Column(scale=6, elem_classes=["card", "doc-panel"]):
+                            gr.Markdown("#### Library Health", elem_classes=["card-title", "no-margin"])
+                            library_overview = gr.Markdown(elem_classes=["status-bar", "library-overview"])
+                            doc_list = gr.Dropdown(
+                                choices=[],
+                                value=None,
+                                label="Active PDFs",
+                                info="Currently indexed sources feeding the RAG pipeline.",
+                                interactive=True,
+                                elem_classes=["text-input"],
+                            )
+                            with gr.Row():
+                                refresh_btn = gr.Button("Refresh Library", elem_classes=["ghost-btn"])
+                                delete_btn = gr.Button("Delete Selected", elem_classes=["danger-btn"])
+
+                        with gr.Column(scale=5, elem_classes=["card", "doc-panel"]):
+                            gr.Markdown("#### Add New Sources", elem_classes=["card-title", "no-margin"])
+                            gr.Markdown(
+                                "Upload one or more PDFs to expand the knowledge base. Ingestion automatically reindexes the vector store with verbose logging for traceability.",
+                                elem_classes=["muted"],
+                            )
+                            file_upload = gr.File(
+                                label="Upload IBM MQ PDFs",
+                                file_count="multiple",
+                                file_types=[".pdf"],
+                                type="filepath",
+                                interactive=True,
+                            )
+                            index_btn = gr.Button("Ingest PDFs", elem_classes=["primary-btn", "full-width"])
 
             msg.submit(respond, [msg, chatbot, role_state], [msg, chatbot])
             clear.click(lambda: None, None, chatbot, queue=False)
@@ -441,10 +487,10 @@ def build_ui() -> gr.Blocks:
             outputs=status,
         )
 
-        refresh_btn.click(refresh_documents, None, doc_list)
-        index_btn.click(upload_and_index, file_upload, library_overview)
-        file_upload.change(refresh_documents, None, doc_list)
-        delete_btn.click(handle_delete, doc_list, library_overview)
+        refresh_btn.click(refresh_library, None, [doc_list, library_overview])
+        index_btn.click(ingest_and_refresh, file_upload, [doc_list, library_overview])
+        file_upload.change(refresh_library, None, [doc_list, library_overview])
+        delete_btn.click(delete_and_refresh, doc_list, [doc_list, library_overview])
         logout_btn.click(
             logout,
             inputs=role_state,
