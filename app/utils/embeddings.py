@@ -35,6 +35,11 @@ def _ensure_local_assets(model_path: Path) -> Path:
         return model_path
 
     if not ALLOW_HF_INTERNET:
+        logger.error(
+            "Embedding assets expected at %s are missing while ALLOW_HF_INTERNET is false; "
+            "ingestion will stop until the files are present.",
+            model_path,
+        )
         raise FileNotFoundError(
             "Embedding assets are missing locally and internet downloads are disabled. "
             f"Place the Snowflake Arctic model under '{model_path}' with its config.json "

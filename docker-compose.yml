@@ -7,6 +7,9 @@ services:
       - "7860:7860"
     environment:
       - MODEL_PATH=/app/models/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf
+      - ALLOW_HF_INTERNET=${ALLOW_HF_INTERNET:-false}
+      - EMBEDDING_MODEL_ID=${EMBEDDING_MODEL_ID:-Snowflake/snowflake-arctic-embed-xs}
+      - EMBEDDING_MODEL_DIR=${EMBEDDING_MODEL_DIR:-/app/data/models/snowflake-arctic-embed-xs}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change_me_strong_password}
       - USER_USERNAME=${USER_USERNAME:-user}
