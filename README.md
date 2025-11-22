@@ -70,9 +70,11 @@ Because instead of making stuff up, the robot uses **real information** it just 
 2. **Download the model (once, large download)**
    ```bash
    mkdir -p models
-   wget -O models/llama-3.1-8b-instruct-q5_k_m.gguf \
-     https://huggingface.co/QuantFactory/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q5_K_M.gguf
+   wget -O models/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf \
+     https://huggingface.co/QuantFactory/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf
    ```
+   The filename on Hugging Face is case-sensitive; using the hyphenated variant
+   will return `404 Not Found`.
 
 3. **Set credentials and model path**
    Create `.env` (ignored by git):
@@ -81,7 +83,7 @@ Because instead of making stuff up, the robot uses **real information** it just 
    ADMIN_PASSWORD=change_me_strong_password
    USER_USERNAME=user
    USER_PASSWORD=mquser2025
-   MODEL_PATH=/app/models/llama-3.1-8b-instruct-q5_k_m.gguf
+   MODEL_PATH=/app/models/Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf
    LOG_LEVEL=DEBUG
    SHARE_INTERFACE=false
    ```

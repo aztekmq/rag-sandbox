@@ -36,7 +36,9 @@ DATA_DIR: Final[Path] = BASE_DIR / "data"
 PDF_DIR: Final[Path] = DATA_DIR / "pdfs"
 CHROMA_DIR: Final[Path] = DATA_DIR / "chroma_db"
 LOG_DIR: Final[Path] = DATA_DIR / "logs"
-DEFAULT_MODEL_FILENAME: Final[str] = "llama-3.1-8b-instruct-q5_k_m.gguf"
+# Case-sensitive filename that matches the upstream GGUF artifact; altering the
+# casing can cause 404 responses during downloads on case-sensitive filesystems.
+DEFAULT_MODEL_FILENAME: Final[str] = "Meta-Llama-3.1-8B-Instruct.Q5_K_M.gguf"
 DEFAULT_MODEL_PATH: Final[Path] = (
     Path(os.getenv("MODEL_PATH", BASE_DIR / "models" / DEFAULT_MODEL_FILENAME))
     .expanduser()
