@@ -402,62 +402,97 @@ def build_ui() -> gr.Blocks:
 
         status = gr.Markdown(visible=False, elem_classes=["status-bar"])
 
-        with gr.Column(visible=False, elem_classes=["card", "workspace"], elem_id="workspace") as main_interface:
-            with gr.Row(elem_classes=["workspace-header"]):
+        with gr.Column(visible=False, elem_classes=["workspace"], elem_id="workspace") as main_interface:
+            with gr.Row(elem_classes=["workspace-header", "card"]):
                 gr.Markdown("### Workspace", elem_classes=["card-title", "no-margin"])
                 user_badge = gr.Markdown("", elem_classes=["badge"])
                 logout_btn = gr.Button("Logout", elem_classes=["ghost-btn"])
 
-            with gr.Tabs(elem_classes=["tabset"]) as tabs:
-                with gr.Tab("Chat Experience", elem_id="chat-tab"):
+            with gr.Row(elem_classes=["workspace-layout"]):
+                with gr.Column(scale=3, elem_classes=["card", "sidebar"]):
+                    gr.Markdown("#### Your sessions", elem_classes=["card-title", "no-margin"])
                     gr.Markdown(
-                        "Engage with your IBM MQ knowledge base using a clean, ChatGPT-inspired conversational flow.",
+                        "Manage conversations and quickly return to recent threads. This panel mirrors the familiar ChatGPT navigation while staying responsive across devices.",
                         elem_classes=["muted"],
                     )
-                    chatbot = gr.Chatbot(height=540, bubble_full_width=False, layout="panel", elem_classes=["chatbot"])
-                    with gr.Row():
-                        msg = gr.Textbox(
-                            label="Ask about IBM MQ",
-                            placeholder="Ask a question or paste a log snippet...",
-                            elem_classes=["text-input", "chat-input"],
-                        )
-                        clear = gr.Button("Clear", elem_classes=["ghost-btn"])
-
-                with gr.Tab("Document Studio", visible=False, elem_id="admin-tab") as admin_tab:
                     gr.Markdown(
-                        "Administer the localized corpus: review, ingest, or prune documents powering the RAG pipeline.",
-                        elem_classes=["muted"],
+                        """
+                        - Background check requirements
+                        - Collaboration and civic engagement
+                        - Empty message clarification
+                        - BCC director at Vanderbilt
+                        - Polite phrasing suggestions
+                        - Meeting subject ideas
+                        - RAG explained simply
+                        - Back in the office on a project
+                        """,
+                        elem_classes=["session-list"],
                     )
-                    with gr.Row(elem_classes=["doc-studio-grid"]):
-                        with gr.Column(scale=6, elem_classes=["card", "doc-panel"]):
-                            gr.Markdown("#### Library Health", elem_classes=["card-title", "no-margin"])
-                            library_overview = gr.Markdown(elem_classes=["status-bar", "library-overview"])
-                            doc_list = gr.Dropdown(
-                                choices=[],
-                                value=None,
-                                label="Active PDFs",
-                                info="Currently indexed sources feeding the RAG pipeline.",
-                                interactive=True,
-                                elem_classes=["text-input"],
-                            )
-                            with gr.Row():
-                                refresh_btn = gr.Button("Refresh Library", elem_classes=["ghost-btn"])
-                                delete_btn = gr.Button("Delete Selected", elem_classes=["danger-btn"])
+                    gr.Button("New conversation", elem_classes=["primary-btn", "full-width", "sidebar-btn"], variant="primary")
 
-                        with gr.Column(scale=5, elem_classes=["card", "doc-panel"]):
-                            gr.Markdown("#### Add New Sources", elem_classes=["card-title", "no-margin"])
+                with gr.Column(scale=9, elem_classes=["card", "content-shell"]):
+                    with gr.Tabs(elem_classes=["tabset"]) as tabs:
+                        with gr.Tab("Chat Experience", elem_id="chat-tab"):
                             gr.Markdown(
-                                "Upload one or more PDFs to expand the knowledge base. Ingestion automatically reindexes the vector store with verbose logging for traceability.",
+                                """
+                                Engage with your IBM MQ knowledge base using a clean, ChatGPT-inspired conversational flow.
+                                """,
                                 elem_classes=["muted"],
                             )
-                            file_upload = gr.File(
-                                label="Upload IBM MQ PDFs",
-                                file_count="multiple",
-                                file_types=[".pdf"],
-                                type="filepath",
-                                interactive=True,
+                            gr.Markdown(
+                                "## What can I help with?",
+                                elem_classes=["chat-hero"],
                             )
-                            index_btn = gr.Button("Ingest PDFs", elem_classes=["primary-btn", "full-width"])
+                            chatbot = gr.Chatbot(
+                                height=420,
+                                bubble_full_width=False,
+                                layout="panel",
+                                elem_classes=["chatbot", "chat-frame"],
+                            )
+                            with gr.Row(elem_classes=["chat-input-row"]):
+                                msg = gr.Textbox(
+                                    label="Ask about IBM MQ",
+                                    placeholder="Ask a question or paste a log snippet...",
+                                    elem_classes=["text-input", "chat-input"],
+                                    scale=10,
+                                )
+                                clear = gr.Button("Clear", elem_classes=["ghost-btn", "icon-btn"], scale=2)
+
+                        with gr.Tab("Document Studio", visible=False, elem_id="admin-tab") as admin_tab:
+                            gr.Markdown(
+                                "Administer the localized corpus: review, ingest, or prune documents powering the RAG pipeline.",
+                                elem_classes=["muted"],
+                            )
+                            with gr.Row(elem_classes=["doc-studio-grid"]):
+                                with gr.Column(scale=6, elem_classes=["card", "doc-panel"]):
+                                    gr.Markdown("#### Library Health", elem_classes=["card-title", "no-margin"])
+                                    library_overview = gr.Markdown(elem_classes=["status-bar", "library-overview"])
+                                    doc_list = gr.Dropdown(
+                                        choices=[],
+                                        value=None,
+                                        label="Active PDFs",
+                                        info="Currently indexed sources feeding the RAG pipeline.",
+                                        interactive=True,
+                                        elem_classes=["text-input"],
+                                    )
+                                    with gr.Row():
+                                        refresh_btn = gr.Button("Refresh Library", elem_classes=["ghost-btn"])
+                                        delete_btn = gr.Button("Delete Selected", elem_classes=["danger-btn"])
+
+                                with gr.Column(scale=5, elem_classes=["card", "doc-panel"]):
+                                    gr.Markdown("#### Add New Sources", elem_classes=["card-title", "no-margin"])
+                                    gr.Markdown(
+                                        "Upload one or more PDFs to expand the knowledge base. Ingestion automatically reindexes the vector store with verbose logging for traceability.",
+                                        elem_classes=["muted"],
+                                    )
+                                    file_upload = gr.File(
+                                        label="Upload IBM MQ PDFs",
+                                        file_count="multiple",
+                                        file_types=[".pdf"],
+                                        type="filepath",
+                                        interactive=True,
+                                    )
+                                    index_btn = gr.Button("Ingest PDFs", elem_classes=["primary-btn", "full-width"])
 
             msg.submit(respond, [msg, chatbot, role_state], [msg, chatbot])
             clear.click(lambda: None, None, chatbot, queue=False)
