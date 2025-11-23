@@ -10,6 +10,7 @@ apps.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 import uuid
@@ -106,6 +107,40 @@ def _format_session_meta(record: SessionRecord) -> str:
         f"Created: {record.created_at:%b %d %H:%M UTC} · Updated: {record.updated_at:%b %d %H:%M UTC}\n"
         f"Turns: {len(record.history)} · Lifespan: {duration.total_seconds():.0f}s"
     )
+
+
+def _safe_markdown(value: str = "", **kwargs) -> gr.Markdown:
+    """Create a Markdown component while removing unsupported kwargs.
+
+    Gradio releases can differ slightly in accepted keyword arguments. Some
+    deployments may still attempt to pass ``min_width`` for layout tweaking,
+    which raises ``TypeError`` on versions that do not expose the parameter.
+    This helper strips any unsupported arguments, logs the adjustment for
+    traceability, and returns a compatible component to keep startup robust.
+
+    Args:
+        value: Initial markdown text rendered in the component.
+        **kwargs: Arbitrary keyword arguments forwarded to ``gr.Markdown``.
+
+    Returns:
+        A configured ``gr.Markdown`` built with options supported by the
+        active Gradio installation.
+    """
+
+    signature = inspect.signature(gr.Markdown.__init__)
+    unsupported: list[str] = []
+
+    for arg in ["min_width"]:
+        if arg in kwargs and arg not in signature.parameters:
+            unsupported.append(arg)
+            kwargs.pop(arg)
+
+    if unsupported:
+        logger.warning(
+            "Removed unsupported Markdown args %s for Gradio %s", unsupported, gr.__version__
+        )
+
+    return gr.Markdown(value, **kwargs)
 
 
 def _list_session_choices(role: str, username: str) -> list[tuple[str, str]]:
@@ -547,28 +582,28 @@ def build_app() -> gr.Blocks:
 
         # ---------------------- Login Screen ----------------------
         with gr.Column(visible=True, elem_classes=["panel"], elem_id="login-view") as login_view:
-            gr.Markdown("## Welcome to MQ RAG Search", elem_classes=["title"])
-            gr.Markdown(
+            _safe_markdown("## Welcome to MQ RAG Search", elem_classes=["title"])
+            _safe_markdown(
                 "Sign in to explore AI-assisted answers backed by your MQ knowledge base.",
                 elem_classes=["status"],
             )
             userid = gr.Textbox(label="User ID", placeholder="Enter your username", autofocus=True)
             password = gr.Textbox(label="Password", placeholder="Enter your password", type="password")
-            login_error = gr.Markdown(visible=False, elem_classes=["status"], value="")
+            login_error = _safe_markdown(visible=False, elem_classes=["status"], value="")
 
         # ---------------------- Workspace -------------------------
         with gr.Row(visible=False, elem_id="workspace", elem_classes=["layout-row"]) as workspace:
             # Sidebar
             with gr.Column(elem_classes=["sidebar", "panel"], scale=3):
                 with gr.Row():
-                    gr.Markdown("### AI Search", elem_classes=["no-margin"])
+                    _safe_markdown("### AI Search", elem_classes=["no-margin"])
                     logout_btn = gr.Button("Logout", variant="secondary", elem_classes=["ghost"], scale=0)
                 with gr.Row():
-                    user_badge = gr.Markdown("", elem_classes=["status"])
-                    role_badge = gr.Markdown("", elem_classes=["status"])
+                    user_badge = _safe_markdown("", elem_classes=["status"])
+                    role_badge = _safe_markdown("", elem_classes=["status"])
                 new_session_btn = gr.Button("New Search / Session", elem_classes=["primary"], variant="primary")
                 session_radio = gr.Radio(label="Recent Sessions", choices=[], interactive=True)
-                session_meta = gr.Markdown("Select a session to begin.", elem_classes=["status"])
+                session_meta = _safe_markdown("Select a session to begin.", elem_classes=["status"])
                 with gr.Row():
                     view_btn = gr.Button("View", elem_classes=["ghost"], variant="secondary")
                     delete_session_btn = gr.Button("Delete", elem_classes=["ghost"], variant="secondary")
@@ -579,31 +614,31 @@ def build_app() -> gr.Blocks:
                     doc_list = gr.Dropdown(label="Documents", choices=[], interactive=False)
                     metadata = gr.Textbox(label="Metadata / Notes", placeholder="Admin can edit", interactive=False)
                     doc_delete = gr.Button("Delete Document", variant="secondary", interactive=False)
-                    doc_overview = gr.Markdown("", elem_classes=["status"])
-                    admin_hint = gr.Markdown("Admin-only.", elem_classes=["status"])
+                    doc_overview = _safe_markdown("", elem_classes=["status"])
+                    admin_hint = _safe_markdown("Admin-only.", elem_classes=["status"])
 
                 help_btn = gr.Button("Help & FAQ", elem_classes=["ghost"], variant="secondary")
 
             # Main content
             with gr.Column(scale=9, elem_classes=["panel"], elem_id="main-content"):
                 with gr.Column(visible=True, elem_id="search-view") as search_view:
-                    gr.Markdown("### MQ AI Search", elem_classes=["title"])
+                    _safe_markdown("### MQ AI Search", elem_classes=["title"])
                     hero_query = gr.Textbox(
                         label="Ask anything about MQ",
                         placeholder="Search documentation, logs, or troubleshooting steps…",
                         lines=2,
                         elem_classes=["hero-input"],
                     )
-                    response_timer = gr.Markdown("Response time: --", elem_classes=["status"])
+                    response_timer = _safe_markdown("Response time: --", elem_classes=["status"])
                     chatbot = gr.Chatbot(height=520, bubble_full_width=False, elem_classes=["chatbot"])
                     with gr.Row():
                         clear_btn = gr.Button("Clear", elem_classes=["ghost"], variant="secondary")
                         back_to_help_btn = gr.Button("Open Help", elem_classes=["ghost"], variant="secondary")
 
                 with gr.Column(visible=False, elem_id="help-view", elem_classes=["help-page"]) as help_view:
-                    gr.Markdown("## Help & Onboarding")
+                    _safe_markdown("## Help & Onboarding")
                     back_to_search = gr.Button("Back to Search", elem_classes=["primary"], variant="primary")
-                    gr.Markdown(
+                    _safe_markdown(
                         """
 **Overview**
 
