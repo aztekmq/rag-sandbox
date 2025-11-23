@@ -1,17 +1,15 @@
-"""Gradio application exposing admin and user interfaces.
+"""Modern Gradio UI for the mq-rag experience.
 
-This module builds a responsive, role-aware Gradio interface styled with an
-Apple-inspired aesthetic. It embraces verbose logging and comprehensive
-documentation to comply with international programming standards while making
-it easy to debug user journeys through the RAG workspace. Distinct landing
-experiences exist for general users (chat-focused) and administrators (document
-operations), with frictionless transitions between login, workspace, and logout
-states.
+This module rebuilds the interface into a single, role-aware Blocks app that
+resembles contemporary AI search tools. It preserves all backend hooks while
+adding verbose logging and documentation that comply with international
+programming standards. The UI uses a lightweight state machine to toggle
+between login, search, and help experiences without launching multiple Gradio
+apps.
 """
 
 from __future__ import annotations
 
-import inspect
 import logging
 import time
 import uuid
@@ -21,15 +19,17 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 import gradio as gr
-import gradio.blocks as gr_blocks
-import gradio.routes as gr_routes
-import gradio_client.utils as gr_client_utils
 
 from app.auth import authenticate
 from app.config import PDF_DIR, SHARE_INTERFACE
 from app.rag_chain import delete_document, get_documents_list, ingest_pdfs, query_rag
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Session management helpers (preserved)
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -43,7 +43,7 @@ class SessionRecord:
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
     def as_choice(self) -> tuple[str, str]:
-        """Return a Gradio-friendly ``(label, value)`` tuple for dropdowns."""
+        """Return a Gradio-friendly ``(label, value)`` tuple for selection widgets."""
 
         timestamp = self.updated_at.strftime("%b %d • %H:%M")
         label = f"{self.title} · {timestamp}"
@@ -77,7 +77,7 @@ def _format_session_title(bucket: Dict[str, SessionRecord]) -> str:
     """Generate a human-readable session title based on bucket size."""
 
     next_index = len(bucket) + 1
-    title = f"Conversation {next_index}"
+    title = f"Session {next_index}"
     logger.debug("Generated session title: %s", title)
     return title
 
@@ -137,9 +137,7 @@ def _load_session(role: str, username: str, session_id: str | None) -> SessionRe
 
     bucket = _get_session_bucket(role, username)
     if session_id and session_id in bucket:
-        logger.debug(
-            "Loaded requested session %s for %s", session_id, _session_key(role, username)
-        )
+        logger.debug("Loaded requested session %s for %s", session_id, _session_key(role, username))
         return bucket[session_id]
 
     logger.info("Requested session not found; returning default for %s", _session_key(role, username))
@@ -154,69 +152,26 @@ def _delete_session(role: str, username: str, session_id: str | None) -> Session
         bucket.pop(session_id)
         logger.info("Deleted session %s for %s", session_id, _session_key(role, username))
     elif session_id:
-        logger.warning(
-            "Attempted to delete nonexistent session %s for %s", session_id, _session_key(role, username)
-        )
+        logger.warning("Attempted to delete nonexistent session %s for %s", session_id, _session_key(role, username))
 
     return _ensure_default_session(role, username)
 
 
-def login(
-    username: str,
-    password: str,
-    role: str,
-) -> Tuple[gr.update, gr.update, str, str, str]:
-    """Authenticate user and toggle interface visibility.
-
-    The function preserves explicit logging to trace authentication outcomes and
-    primes downstream components with the detected role and display name so that
-    both user and administrator dashboards render the correct controls.
-    """
-
-    if authenticate(username, password, role):
-        safe_username = username or role.title()
-        logger.info("User %s logged in as %s", safe_username, role)
-        role_banner = f"Logged in as {role.capitalize()} — welcome, {safe_username}."
-        return (
-            gr.update(visible=False),
-            gr.update(visible=True),
-            role_banner,
-            role,
-            safe_username,
-        )
-
-    logger.warning("Failed login attempt for user %s", username or "<blank>")
-    return gr.update(visible=True), gr.update(visible=False), "Wrong credentials!", "", ""
+# ---------------------------------------------------------------------------
+# Document helpers (preserved)
+# ---------------------------------------------------------------------------
 
 
 def _resolve_uploaded_file(file: gr.File | str | Path) -> tuple[Path, Path]:
-    """Resolve a Gradio uploaded file to source and destination paths.
-
-    Gradio's ``File`` component may deliver several object shapes across
-    versions (e.g., ``NamedString`` wrappers or temporary file handles).
-    This helper inspects common attributes to locate the on-disk temporary
-    file while preserving the original filename for storage. Verbose logging
-    documents each decision branch so operators can trace upload handling in
-    production environments that require auditable behavior under
-    international programming standards.
-    """
+    """Resolve a Gradio uploaded file to source and destination paths."""
 
     candidate_sources = []
-
-    # ``name`` is typically the temporary file path for NamedString wrappers, but
-    # can also be just the display name. We still log it to aid debugging.
     if getattr(file, "name", None):
         candidate_sources.append(Path(file.name))
-
-    # ``path`` is present on some file-like objects returned by Gradio.
     if getattr(file, "path", None):
         candidate_sources.append(Path(file.path))
-
-    # ``value`` is used by certain ``NamedString`` wrappers to hold the temp path.
     if getattr(file, "value", None):
         candidate_sources.append(Path(file.value))
-
-    # If the object itself is path-like, use it as a final fallback.
     if isinstance(file, (str, Path)):
         candidate_sources.append(Path(file))
 
@@ -226,12 +181,7 @@ def _resolve_uploaded_file(file: gr.File | str | Path) -> tuple[Path, Path]:
             display_name = getattr(file, "orig_name", getattr(file, "name", source.name))
             sanitized_name = Path(display_name).name
             destination = PDF_DIR / sanitized_name
-            logger.debug(
-                "Resolved upload source=%s destination=%s (display=%s)",
-                source,
-                destination,
-                sanitized_name,
-            )
+            logger.debug("Resolved upload source=%s destination=%s (display=%s)", source, destination, sanitized_name)
             return source, destination
 
     logger.error("Upload resolution failed; evaluated sources: %s", candidate_sources)
@@ -246,7 +196,6 @@ def upload_and_index(files: list[gr.File | str | Path] | None) -> str:
         return "No files uploaded"
 
     failures: list[str] = []
-
     for file in files:
         try:
             source, destination = _resolve_uploaded_file(file)
@@ -274,29 +223,6 @@ def _render_library_overview(documents: list[str]) -> str:
     return f"**{len(documents)} active documents**\n\n{entries}"
 
 
-def show_admin_controls(role_str: str):
-    """Reveal admin-only widgets when applicable.
-
-    This function centralizes the toggling logic for administrator-specific
-    controls. It also refreshes the document library so the admin landing page
-    immediately reflects the current RAG corpus.
-    """
-
-    is_admin = "admin" in (role_str or "").lower()
-    documents = refresh_documents() if is_admin else []
-    selected_doc = documents[0] if documents else None
-    logger.debug("Setting admin control visibility: %s", is_admin)
-    overview_text = _render_library_overview(documents)
-    return [
-        gr.update(visible=is_admin),
-        gr.update(visible=is_admin),
-        gr.update(visible=is_admin),
-        gr.update(visible=is_admin, choices=documents, value=selected_doc),
-        gr.update(visible=is_admin),
-        gr.update(visible=is_admin, value=overview_text),
-    ]
-
-
 def refresh_documents() -> list[str]:
     """Refresh the dropdown listing available documents."""
 
@@ -306,13 +232,7 @@ def refresh_documents() -> list[str]:
 
 
 def refresh_library(status: str | None = None) -> tuple[gr.update, str]:
-    """Return an updated document dropdown alongside a formatted overview.
-
-    The function is designed for Gradio event callbacks so that ingest, delete,
-    and manual refresh actions all hydrate the "Document Studio" tab with a
-    consistent snapshot of the active PDFs. It optionally prepends a
-    human-readable status to the overview when ``status`` is supplied.
-    """
+    """Return an updated document dropdown alongside a formatted overview."""
 
     docs = refresh_documents()
     default_choice = docs[0] if docs else None
@@ -320,9 +240,7 @@ def refresh_library(status: str | None = None) -> tuple[gr.update, str]:
     if status:
         overview = f"{status}\n\n{overview}"
 
-    logger.debug(
-        "Library state prepared with %d documents (default=%s)", len(docs), default_choice
-    )
+    logger.debug("Library state prepared with %d documents (default=%s)", len(docs), default_choice)
     return gr.update(choices=docs, value=default_choice), overview
 
 
@@ -348,21 +266,22 @@ def ingest_and_refresh(files: list[gr.File | str | Path] | None) -> tuple[gr.upd
     return refresh_library(status)
 
 
-def _session_selection_payload(role: str, username: str, record: SessionRecord) -> tuple:
-    """Return updates for session selection UI when a session changes."""
+# ---------------------------------------------------------------------------
+# Authentication and session hydration
+# ---------------------------------------------------------------------------
 
-    choices = _list_session_choices(role, username)
-    meta = _format_session_meta(record)
-    logger.debug(
-        "Prepared session payload for %s with %d choices", _session_key(role, username), len(choices)
-    )
-    return (
-        gr.update(choices=choices, value=record.session_id),
-        record.session_id,
-        gr.update(value=record.history),
-        meta,
-        "Response time: --",
-    )
+
+def _detect_role(username: str, password: str) -> str | None:
+    """Infer the user's role using the existing authentication helper."""
+
+    if authenticate(username, password, "admin"):
+        logger.info("User %s authenticated as admin", username)
+        return "admin"
+    if authenticate(username, password, "user"):
+        logger.info("User %s authenticated as user", username)
+        return "user"
+    logger.warning("Authentication failed for user %s", username or "<blank>")
+    return None
 
 
 def hydrate_sessions(role: str, username: str) -> tuple:
@@ -370,60 +289,80 @@ def hydrate_sessions(role: str, username: str) -> tuple:
 
     record = _ensure_default_session(role, username)
     logger.info("Hydrating sessions for %s", _session_key(role, username))
-    return _session_selection_payload(role, username, record)
+    choices = _list_session_choices(role, username)
+    meta = _format_session_meta(record)
+    return (
+        gr.update(choices=choices, value=record.session_id),
+        record.session_id,
+        record.history,
+        meta,
+        "Response time: --",
+    )
 
 
-def start_new_session(role: str, username: str) -> tuple:
+def start_new_session(state: dict) -> tuple:
     """Create a brand-new session, returning updates for the selection UI."""
 
+    role = state.get("role") or "user"
+    username = state.get("user") or role
     bucket = _get_session_bucket(role, username)
     session_id = str(uuid.uuid4())
     record = SessionRecord(session_id=session_id, title=_format_session_title(bucket))
     bucket[session_id] = record
     logger.info("Started new session %s for %s", session_id, _session_key(role, username))
-    return _session_selection_payload(role, username, record)
+    choices = _list_session_choices(role, username)
+    meta = _format_session_meta(record)
+    return gr.update(choices=choices, value=session_id), session_id, [], meta, "Response time: --"
 
 
-def select_session(session_id: str, role: str, username: str) -> tuple:
+def select_session(session_id: str, state: dict) -> tuple:
     """Switch the active session and surface its history in the chat UI."""
 
+    role = state.get("role") or "user"
+    username = state.get("user") or role
     record = _load_session(role, username, session_id)
     logger.info("Switching to session %s for %s", record.session_id, _session_key(role, username))
-    return _session_selection_payload(role, username, record)
+    choices = _list_session_choices(role, username)
+    meta = _format_session_meta(record)
+    return gr.update(choices=choices, value=record.session_id), record.session_id, record.history, meta, "Response time: --"
 
 
-def remove_session(session_id: str | None, role: str, username: str) -> tuple:
+def remove_session(session_id: str | None, state: dict) -> tuple:
     """Delete the selected session and refresh selection controls."""
 
+    role = state.get("role") or "user"
+    username = state.get("user") or role
     record = _delete_session(role, username, session_id)
     logger.info("Session %s removed; activating %s for %s", session_id, record.session_id, _session_key(role, username))
-    return _session_selection_payload(role, username, record)
+    choices = _list_session_choices(role, username)
+    meta = _format_session_meta(record)
+    return gr.update(choices=choices, value=record.session_id), record.session_id, record.history, meta, "Response time: --"
 
 
-def clear_session_history(session_id: str, role: str, username: str) -> tuple:
+def clear_session_history(session_id: str, state: dict) -> tuple:
     """Clear the active session while keeping the conversation record available."""
 
+    role = state.get("role") or "user"
+    username = state.get("user") or role
     record = _load_session(role, username, session_id)
-    logger.info(
-        "Clearing history for session %s belonging to %s", record.session_id, _session_key(role, username)
-    )
+    logger.info("Clearing history for session %s belonging to %s", record.session_id, _session_key(role, username))
     _persist_history(record.session_id, role, username, [])
     refreshed = _load_session(role, username, record.session_id)
     meta = _format_session_meta(refreshed)
-    return gr.update(value=[]), "Response time: --", refreshed.session_id, meta
+    return [], "Response time: --", refreshed.session_id, meta
 
 
 def respond(
     message: str,
     history: list[list[str]] | list[tuple[str, str]] | None,
-    role_str: str,
+    state: dict,
     session_id: str,
     username: str,
 ):
     """Generate a response using the RAG engine while streaming status updates."""
 
     sanitized = (message or "").strip()
-    active_role = role_str or "user"
+    active_role = state.get("role") or "user"
     active_user = username or active_role
     record = _load_session(active_role, active_user, session_id)
 
@@ -432,9 +371,7 @@ def respond(
         meta = _format_session_meta(record)
         return "", record.history, "Please enter a prompt to continue.", record.session_id, meta
 
-    logger.info(
-        "Received query for session %s belonging to %s", record.session_id, _session_key(active_role, active_user)
-    )
+    logger.info("Received query for session %s belonging to %s", record.session_id, _session_key(active_role, active_user))
     start_time = time.perf_counter()
 
     existing_history = [(turn[0], turn[1]) for turn in (history or [])]
@@ -442,409 +379,398 @@ def respond(
     working_history.append((sanitized, ""))
     _persist_history(record.session_id, active_role, active_user, working_history)
     meta = _format_session_meta(record)
-    yield "", working_history, "Gathering response...", record.session_id, meta
+    yield "", working_history, "Thinking…", record.session_id, meta
 
     answer = query_rag(sanitized)
     elapsed = time.perf_counter() - start_time
     working_history[-1] = (sanitized, answer)
     _persist_history(record.session_id, active_role, active_user, working_history)
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
-    logger.info(
-        "Response for session %s completed in %.3f seconds", record.session_id, elapsed
-    )
+    logger.info("Response for session %s completed in %.3f seconds", record.session_id, elapsed)
     return "", working_history, f"Response time: {elapsed:.2f}s", record.session_id, meta
 
 
-def logout(
-    role_str: str,
-) -> tuple[gr.update, gr.update, gr.update, str, gr.update, gr.update, gr.update, str, str, gr.update]:
-    """Return to the landing page and clear transient state."""
+# ---------------------------------------------------------------------------
+# Page state management
+# ---------------------------------------------------------------------------
 
-    logger.info("Logout requested for role: %s", role_str or "unknown")
-    cleared_chat = gr.update(value=[])
-    cleared_docs = gr.update(choices=[], value=None)
-    cleared_sessions = gr.update(choices=[], value=None)
+
+def _set_page(state: dict, page: str) -> dict:
+    """Return a new state dict with the page updated."""
+
+    new_state = dict(state)
+    new_state["page"] = page
+    logger.debug("Page transition to %s with state %s", page, new_state)
+    return new_state
+
+
+def _initial_state() -> dict:
+    """Default app state used at startup and after logout."""
+
+    return {"page": "login", "role": "", "user": "", "session_id": ""}
+
+
+def attempt_login(username: str, password: str, state: dict) -> tuple:
+    """Authenticate and transition to the search page when successful."""
+
+    role = _detect_role(username, password)
+    if not role:
+        logger.warning("Login failed; keeping user on login page")
+        return (
+            state,
+            gr.update(value="Invalid credentials. Please try again.", visible=True),
+            gr.update(visible=True),
+            gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(value=""),
+            gr.update(value=""),
+            gr.update(choices=[], value=None),
+            "",
+            [],
+            "Select a session to begin.",
+            "Response time: --",
+            "",
+            "",
+        )
+
+    safe_username = username or role.title()
+    new_state = {
+        "page": "search",
+        "role": role,
+        "user": safe_username,
+        "session_id": "",
+    }
+    sessions = hydrate_sessions(role, safe_username)
+    logger.info("Login succeeded for %s; transitioning to search page", safe_username)
     return (
+        new_state,
+        gr.update(value="", visible=False),
+        gr.update(visible=False),
         gr.update(visible=True),
         gr.update(visible=False),
-        gr.update(value="", visible=False),
-        "",
-        cleared_chat,
-        cleared_docs,
-        cleared_sessions,
-        "",
-        "Select a session to begin.",
-        "Response time: --",
+        gr.update(value=safe_username),
+        gr.update(value=role.title()),
+        sessions[0],
+        sessions[1],
+        sessions[2],
+        sessions[3],
+        sessions[4],
+        safe_username,
+        role,
     )
 
 
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+def logout(state: dict) -> tuple:
+    """Return to the landing page and clear transient state."""
+
+    logger.info("Logout requested for role: %s", state.get("role") or "unknown")
+    cleared_state = _initial_state()
+    return (
+        cleared_state,
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(value="", visible=False),
+        gr.update(value=""),
+        gr.update(value=""),
+        gr.update(choices=[], value=None),
+        "",
+        [],
+        "Select a session to begin.",
+        "Response time: --",
+        "",
+        "",
+    )
 
 
-def _monkeypatch_gradio_api_info() -> None:
-    """Provide defensive wrappers for Gradio API info generation.
+def toggle_page(target: str, state: dict) -> tuple:
+    """Toggle between search and help views while remaining logged in."""
 
-    Gradio attempts to produce OpenAPI-style metadata on startup. Certain
-    component combinations can surface a ``TypeError`` in
-    ``gradio_client.utils.json_schema_to_python_type`` when boolean schema
-    fragments are present. This wrapper stack retains verbose logging for
-    debugging while shielding the application from startup failures, which
-    aligns with the user's requirement for robust, traceable execution under
-    international programming documentation standards.
-    """
-
-    original_schema_to_type = gr_client_utils.json_schema_to_python_type
-
-    def _coerce_bool_schema(fragment):
-        """Normalize boolean JSON schema fragments into dictionaries.
-
-        The Gradio helper ``json_schema_to_python_type`` expects mapping-based
-        schema nodes, but boolean fragments are valid JSON Schema shortcuts. To
-        keep logging verbose while avoiding repeated stack traces, this helper
-        recursively converts ``True``/``False`` into descriptive dictionary
-        placeholders that the downstream translator can safely consume.
-        """
-
-        if isinstance(fragment, bool):
-            return {"type": "boolean" if fragment else "null", "description": "coerced bool schema"}
-        if isinstance(fragment, dict):
-            return {key: _coerce_bool_schema(value) for key, value in fragment.items()}
-        if isinstance(fragment, list):
-            return [_coerce_bool_schema(item) for item in fragment]
-        return fragment
-
-    def safe_json_schema_to_python_type(schema, defs=None):  # type: ignore[override]
-        """Handle permissive JSON schema nodes without raising exceptions.
-
-        Gradio occasionally emits boolean schema fragments (``True``/``False``)
-        that violate the assumptions of ``json_schema_to_python_type``. The
-        patched implementation documents the behavior explicitly, coerces
-        boolean fragments into safe dictionaries, and returns a readable
-        placeholder type instead of bubbling up a ``TypeError``.
-        """
-
-        logger.debug("Translating JSON schema to Python type: %s", schema)
-
-        coerced_schema = _coerce_bool_schema(schema)
-        coerced_defs = _coerce_bool_schema(defs) if defs is not None else None
-
-        try:
-            signature = inspect.signature(original_schema_to_type)
-            accepts_defs = len(signature.parameters) > 1
-            logger.debug(
-                "Resolved json_schema_to_python_type signature with defs support: %s", accepts_defs
-            )
-            if accepts_defs:
-                return original_schema_to_type(coerced_schema, coerced_defs)
-            return original_schema_to_type(coerced_schema)
-        except TypeError:
-            logger.exception(
-                "Encountered non-iterable schema fragment; substituting unknown type for resilience"
-            )
-            return "unknown"
-        except Exception:
-            logger.exception(
-                "Unexpected failure translating JSON schema; substituting unknown type for resilience"
-            )
-            return "unknown"
-
-    gr_client_utils.json_schema_to_python_type = safe_json_schema_to_python_type
-    logger.debug("Applied resilient gradio_client.utils.json_schema_to_python_type wrapper")
-
-    if not hasattr(gr_routes, "api_info"):
-        logger.warning("gradio.routes.api_info is unavailable; skipping monkeypatch")
-    else:
-        original_api_info = gr_routes.api_info
-
-        def safe_api_info(serialize: bool = False):  # type: ignore[override]
-            """Generate route API info with verbose error handling."""
-
-            logger.debug(
-                "Generating Gradio route API info (serialize=%s) with fault tolerance", serialize
-            )
-            try:
-                return original_api_info(serialize=serialize)
-            except Exception:
-                logger.exception(
-                    "Failed to generate Gradio route API info; returning minimal stub for stability"
-                )
-                return {"named_endpoints": {}, "unnamed_endpoints": []}
-
-        gr_routes.api_info = safe_api_info
-        logger.debug("Applied defensive gradio.routes.api_info wrapper")
-
-    if hasattr(gr_blocks.Blocks, "get_api_info"):
-        original_get_api_info = gr_blocks.Blocks.get_api_info
-
-        def safe_get_api_info(self):  # type: ignore[override]
-            """Return Blocks API info with robust logging and fallbacks.
-
-            Gradio's schema translation can occasionally throw runtime errors when
-            optional schema nodes are absent. This wrapper preserves the original
-            behavior when possible, while emitting verbose diagnostics and
-            returning a predictable stub structure if the underlying implementation
-            fails. The stub retains the fields expected by the client so that the
-            UI continues to function even when schema generation is impaired.
-            """
-
-            logger.debug("Generating Gradio Blocks API info with protective wrapper")
-            try:
-                return original_get_api_info(self)
-            except Exception:
-                logger.exception(
-                    "Failed to build Gradio Blocks API info; supplying fallback schema with no endpoints"
-                )
-                return {
-                    "named_endpoints": {},
-                    "unnamed_endpoints": [],
-                    "dependencies": {"root": None, "modules": [], "imports": [], "targets": []},
-                }
-
-        gr_blocks.Blocks.get_api_info = safe_get_api_info
-        logger.debug("Patched gradio.blocks.Blocks.get_api_info with protective wrapper")
-    else:
-        logger.warning("gradio.blocks.Blocks.get_api_info is unavailable; no patch applied")
+    updated = _set_page(state, target)
+    return (
+        updated,
+        gr.update(visible=target == "login"),
+        gr.update(visible=target != "login"),
+        gr.update(visible=target == "help"),
+        gr.update(visible=target != "help"),
+    )
 
 
-def build_ui() -> gr.Blocks:
-    """Build the Gradio Blocks interface."""
+def configure_doc_tools(state: dict) -> tuple:
+    """Configure Document Tools interactivity based on role."""
 
-    with gr.Blocks(
-        theme=gr.themes.Soft(),
-        title="IBM MQ RAG Sandbox",
-        css=(ASSETS_DIR / "custom.css").read_text() if (ASSETS_DIR / "custom.css").exists() else None,
-    ) as demo:
-        role_state = gr.State("")
+    is_admin = state.get("role") == "admin"
+    tooltip = "Full access" if is_admin else "Admin-only"
+    logger.debug("Configuring document tools for %s", state.get("role") or "anonymous")
+    dropdown_update, overview = refresh_library()
+    return (
+        gr.update(interactive=is_admin),
+        gr.update(interactive=is_admin),
+        gr.update(interactive=is_admin),
+        gr.update(interactive=is_admin),
+        dropdown_update,
+        gr.update(value=overview + ("\n\nAdmin-only." if not is_admin else "")),
+        tooltip,
+    )
+
+
+# ---------------------------------------------------------------------------
+# UI assembly
+# ---------------------------------------------------------------------------
+
+
+CUSTOM_CSS = """
+body {background: #0d0f12; color: #e8ebf1;}
+.gradio-container {font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;}
+.panel {background: #14171c; border: 1px solid #1f232b; border-radius: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.35);}
+.sidebar {min-width: 280px; max-width: 320px; padding: 12px; gap: 10px;}
+.hero-input input, .hero-input textarea {border-radius: 14px; border: 1px solid #232834; background: #0f1117; color: #e8ebf1; font-size: 18px; padding: 16px 18px;}
+button.primary {background: linear-gradient(135deg, #4b82f7, #8a6bff); color: #fff; border-radius: 12px; border: none;}
+button.ghost {background: transparent; border: 1px solid #2c3342; color: #e8ebf1; border-radius: 10px;}
+.status {color: #9ea8c2; font-size: 13px;}
+.chatbot {background: #0f1117; border: 1px solid #1f232b; border-radius: 16px;}
+.card {padding: 14px; background: #0f1117; border: 1px solid #1f232b; border-radius: 12px;}
+.help-page {line-height: 1.6; color: #d9deeb;}
+@media (max-width: 960px){.layout-row{flex-direction:column;} .sidebar{max-width:100%; width:100%;}}
+"""
+
+
+def build_app() -> gr.Blocks:
+    """Create the Blocks application with conditional rendering."""
+
+    with gr.Blocks(css=CUSTOM_CSS, theme=gr.themes.Soft()) as demo:
+        app_state = gr.State(_initial_state())
         user_state = gr.State("")
+        role_state = gr.State("")
         session_state = gr.State("")
 
-        gr.Markdown(
-            """
-            # IBM MQ Knowledge Base
-            Experience a streamlined, Apple-inspired interface for chatting with and curating your localized knowledge base.
-            """,
-            elem_classes=["page-title"],
-        )
-
-        with gr.Column(visible=True, elem_classes=["card", "login-card"]) as login_box:
+        # ---------------------- Login Screen ----------------------
+        with gr.Column(visible=True, elem_classes=["panel"], elem_id="login-view") as login_view:
+            gr.Markdown("## Welcome to MQ RAG Search", elem_classes=["title"])
             gr.Markdown(
-                """
-                ### Sign in
-                Choose your role to access either the chat experience (user) or the document operations hub (admin).
-                """,
-                elem_classes=["card-title"],
+                "Sign in to explore AI-assisted answers backed by your MQ knowledge base.",
+                elem_classes=["status"],
             )
-            with gr.Row(elem_classes=["login-grid"]):
-                role = gr.Radio(
-                    ["user", "admin"],
-                    label="Login as",
-                    value="user",
-                    elem_classes=["pill-input"],
-                )
-                user = gr.Textbox(
-                    label="Username",
-                    placeholder="your.name",
-                    elem_classes=["text-input"],
-                )
-                pwd = gr.Textbox(
-                    label="Password",
-                    type="password",
-                    placeholder="••••••••",
-                    elem_classes=["text-input"],
-                )
-            login_btn = gr.Button("Enter Workspace", elem_classes=["primary-btn", "full-width"])
+            userid = gr.Textbox(label="User ID", placeholder="Enter your username", autofocus=True)
+            password = gr.Textbox(label="Password", placeholder="Enter your password", type="password")
+            login_error = gr.Markdown(visible=False, elem_classes=["status"], value="")
 
-        status = gr.Markdown(visible=False, elem_classes=["status-bar"])
+        # ---------------------- Workspace -------------------------
+        with gr.Row(visible=False, elem_id="workspace", elem_classes=["layout-row"]) as workspace:
+            # Sidebar
+            with gr.Column(elem_classes=["sidebar", "panel"], scale=3):
+                with gr.Row():
+                    gr.Markdown("### AI Search", elem_classes=["no-margin"])
+                    logout_btn = gr.Button("Logout", variant="secondary", elem_classes=["ghost"], scale=0)
+                with gr.Row():
+                    user_badge = gr.Markdown("", elem_classes=["status"], min_width=0)
+                    role_badge = gr.Markdown("", elem_classes=["status"], min_width=0)
+                new_session_btn = gr.Button("New Search / Session", elem_classes=["primary"], variant="primary")
+                session_radio = gr.Radio(label="Recent Sessions", choices=[], interactive=True)
+                session_meta = gr.Markdown("Select a session to begin.", elem_classes=["status"])
+                with gr.Row():
+                    view_btn = gr.Button("View", elem_classes=["ghost"], variant="secondary")
+                    delete_session_btn = gr.Button("Delete", elem_classes=["ghost"], variant="secondary")
 
-        with gr.Column(visible=False, elem_classes=["workspace"], elem_id="workspace") as main_interface:
-            with gr.Row(elem_classes=["workspace-header", "card"]):
-                gr.Markdown("### Workspace", elem_classes=["card-title", "no-margin"])
-                user_badge = gr.Markdown("", elem_classes=["badge"])
-                logout_btn = gr.Button("Logout", elem_classes=["ghost-btn"])
+                with gr.Accordion("Document Tools", open=False):
+                    doc_upload = gr.File(label="Upload PDFs", file_count="multiple", file_types=[".pdf"], interactive=False)
+                    ingest_btn = gr.Button("Ingest", elem_classes=["primary"], variant="primary", interactive=False)
+                    doc_list = gr.Dropdown(label="Documents", choices=[], interactive=False)
+                    metadata = gr.Textbox(label="Metadata / Notes", placeholder="Admin can edit", interactive=False)
+                    doc_delete = gr.Button("Delete Document", variant="secondary", interactive=False)
+                    doc_overview = gr.Markdown("", elem_classes=["status"])
+                    admin_hint = gr.Markdown("Admin-only.", elem_classes=["status"])
 
-            with gr.Row(elem_classes=["workspace-layout"]):
-                with gr.Column(scale=3, elem_classes=["card", "sidebar"]):
-                    gr.Markdown("#### Your sessions", elem_classes=["card-title", "no-margin"])
+                help_btn = gr.Button("Help & FAQ", elem_classes=["ghost"], variant="secondary")
+
+            # Main content
+            with gr.Column(scale=9, elem_classes=["panel"], elem_id="main-content"):
+                with gr.Column(visible=True, elem_id="search-view") as search_view:
+                    gr.Markdown("### MQ AI Search", elem_classes=["title"])
+                    hero_query = gr.Textbox(
+                        label="Ask anything about MQ",
+                        placeholder="Search documentation, logs, or troubleshooting steps…",
+                        lines=2,
+                        elem_classes=["hero-input"],
+                    )
+                    response_timer = gr.Markdown("Response time: --", elem_classes=["status"])
+                    chatbot = gr.Chatbot(height=520, bubble_full_width=False, elem_classes=["chatbot"])
+                    with gr.Row():
+                        clear_btn = gr.Button("Clear", elem_classes=["ghost"], variant="secondary")
+                        back_to_help_btn = gr.Button("Open Help", elem_classes=["ghost"], variant="secondary")
+
+                with gr.Column(visible=False, elem_id="help-view", elem_classes=["help-page"]) as help_view:
+                    gr.Markdown("## Help & Onboarding")
+                    back_to_search = gr.Button("Back to Search", elem_classes=["primary"], variant="primary")
                     gr.Markdown(
-                        "Manage conversations and quickly return to recent threads unique to your login. Use the controls below to open, start, or delete sessions without losing context.",
-                        elem_classes=["muted"],
+                        """
+**Overview**
+
+Use this app to perform AI-powered search across your MQ knowledge base. Authenticate to access personalized sessions and document management.
+
+**Running a search**
+- Enter a query in the large search bar and press Enter.
+- The assistant responds with contextual answers and cites past turns.
+- Response time and session metadata remain visible above the chat stream.
+
+**Sessions**
+- "New Search / Session" starts a clean conversation.
+- Select any recent session to view its history.
+- "Delete" removes the highlighted session.
+
+**Document tools**
+- Administrators can upload, ingest, edit metadata, and delete documents feeding the RAG index.
+- Standard users can browse documents but cannot modify them (controls disabled with an Admin-only tooltip).
+
+**FAQ & Troubleshooting**
+- If authentication fails, verify credentials and try again.
+- Slow responses? Check connectivity to the vector store and document index.
+- Upload errors? Confirm PDF format and file size limits.
+- Need more help? Contact your platform administrator.
+                        """,
+                        elem_classes=["help-page"],
                     )
-                    session_selector = gr.Dropdown(
-                        label="Saved conversations",
-                        choices=[],
-                        value=None,
-                        interactive=True,
-                        elem_classes=["text-input", "session-dropdown"],
-                    )
-                    session_meta = gr.Markdown(elem_classes=["status-bar", "session-meta"], value="Select a session to begin.")
-                    with gr.Row(elem_classes=["session-actions"]):
-                        new_session_btn = gr.Button(
-                            "New conversation",
-                            elem_classes=["primary-btn", "full-width"],
-                            variant="primary",
-                        )
-                        delete_session_btn = gr.Button(
-                            "Delete session",
-                            elem_classes=["danger-btn", "full-width"],
-                            variant="secondary",
-                        )
 
-                with gr.Column(scale=9, elem_classes=["card", "content-shell"]):
-                    with gr.Tabs(elem_classes=["tabset"]) as tabs:
-                        with gr.Tab("Chat Experience", elem_id="chat-tab"):
-                            gr.Markdown(
-                                """
-                                Engage with your IBM MQ knowledge base using a clean, ChatGPT-inspired conversational flow.
-                                """,
-                                elem_classes=["muted"],
-                            )
-                            gr.Markdown(
-                                "## What can I help with?",
-                                elem_classes=["chat-hero"],
-                            )
-                            response_timer = gr.Markdown(
-                                "Response time: --",
-                                elem_classes=["status-bar", "timer-bar"],
-                            )
-                            chatbot = gr.Chatbot(
-                                height=420,
-                                bubble_full_width=False,
-                                layout="panel",
-                                elem_classes=["chatbot", "chat-frame"],
-                            )
-                            with gr.Row(elem_classes=["chat-input-row"]):
-                                msg = gr.Textbox(
-                                    label="Ask about IBM MQ",
-                                    placeholder="Ask a question or paste a log snippet...",
-                                    elem_classes=["text-input", "chat-input"],
-                                    scale=10,
-                                )
-                                clear = gr.Button("Clear", elem_classes=["ghost-btn", "icon-btn"], scale=2)
+        # ---------------------- Wiring ----------------------------
 
-                        with gr.Tab("Document Studio", visible=False, elem_id="admin-tab") as admin_tab:
-                            gr.Markdown(
-                                "Administer the localized corpus: review, ingest, or prune documents powering the RAG pipeline.",
-                                elem_classes=["muted"],
-                            )
-                            with gr.Row(elem_classes=["doc-studio-grid"]):
-                                with gr.Column(scale=6, elem_classes=["card", "doc-panel"]):
-                                    gr.Markdown("#### Library Health", elem_classes=["card-title", "no-margin"])
-                                    library_overview = gr.Markdown(elem_classes=["status-bar", "library-overview"])
-                                    doc_list = gr.Dropdown(
-                                        choices=[],
-                                        value=None,
-                                        label="Active PDFs",
-                                        info="Currently indexed sources feeding the RAG pipeline.",
-                                        interactive=True,
-                                        elem_classes=["text-input"],
-                                    )
-                                    with gr.Row():
-                                        refresh_btn = gr.Button("Refresh Library", elem_classes=["ghost-btn"])
-                                        delete_btn = gr.Button("Delete Selected", elem_classes=["danger-btn"])
-
-                                with gr.Column(scale=5, elem_classes=["card", "doc-panel"]):
-                                    gr.Markdown("#### Add New Sources", elem_classes=["card-title", "no-margin"])
-                                    gr.Markdown(
-                                        "Upload one or more PDFs to expand the knowledge base. Ingestion automatically reindexes the vector store with verbose logging for traceability.",
-                                        elem_classes=["muted"],
-                                    )
-                                    file_upload = gr.File(
-                                        label="Upload IBM MQ PDFs",
-                                        file_count="multiple",
-                                        file_types=[".pdf"],
-                                        type="filepath",
-                                        interactive=True,
-                                    )
-                                    index_btn = gr.Button("Ingest PDFs", elem_classes=["primary-btn", "full-width"])
-
-            msg.submit(
-                respond,
-                [msg, chatbot, role_state, session_state, user_state],
-                [msg, chatbot, response_timer, session_state, session_meta],
-            )
-            clear.click(
-                clear_session_history,
-                inputs=[session_state, role_state, user_state],
-                outputs=[chatbot, response_timer, session_state, session_meta],
-                queue=False,
-            )
-
-        login_btn.click(
-            login,
-            inputs=[user, pwd, role],
-            outputs=[login_box, main_interface, status, role_state, user_state],
-        ).then(
-            show_admin_controls,
-            inputs=role_state,
+        # Login submits (Enter key)
+        userid.submit(
+            attempt_login,
+            inputs=[userid, password, app_state],
             outputs=[
-                admin_tab,
-                file_upload,
-                index_btn,
-                doc_list,
-                delete_btn,
-                library_overview,
+                app_state,
+                login_error,
+                login_view,
+                workspace,
+                help_view,
+                user_badge,
+                role_badge,
+                session_radio,
+                session_state,
+                chatbot,
+                session_meta,
+                response_timer,
+                user_state,
+                role_state,
             ],
-        ).then(
-            lambda r, u: gr.update(visible=True, value=f"{u} ({r})"),
-            inputs=[role_state, user_state],
-            outputs=user_badge,
-        ).then(
-            lambda _: gr.update(visible=True),
-            inputs=role_state,
-            outputs=status,
-        ).then(
-            hydrate_sessions,
-            inputs=[role_state, user_state],
-            outputs=[session_selector, session_state, chatbot, session_meta, response_timer],
+        )
+        password.submit(
+            attempt_login,
+            inputs=[userid, password, app_state],
+            outputs=[
+                app_state,
+                login_error,
+                login_view,
+                workspace,
+                help_view,
+                user_badge,
+                role_badge,
+                session_radio,
+                session_state,
+                chatbot,
+                session_meta,
+                response_timer,
+                user_state,
+                role_state,
+            ],
         )
 
-        refresh_btn.click(refresh_library, None, [doc_list, library_overview])
-        index_btn.click(ingest_and_refresh, file_upload, [doc_list, library_overview])
-        file_upload.change(refresh_library, None, [doc_list, library_overview])
-        delete_btn.click(delete_and_refresh, doc_list, [doc_list, library_overview])
+        # Search interactions
+        hero_query.submit(
+            respond,
+            inputs=[hero_query, chatbot, app_state, session_state, user_state],
+            outputs=[hero_query, chatbot, response_timer, session_state, session_meta],
+        )
+        clear_btn.click(
+            clear_session_history,
+            inputs=[session_state, app_state],
+            outputs=[chatbot, response_timer, session_state, session_meta],
+            queue=False,
+        )
+
+        # Session controls
         new_session_btn.click(
             start_new_session,
-            inputs=[role_state, user_state],
-            outputs=[session_selector, session_state, chatbot, session_meta, response_timer],
+            inputs=app_state,
+            outputs=[session_radio, session_state, chatbot, session_meta, response_timer],
         )
-        session_selector.change(
+        view_btn.click(
             select_session,
-            inputs=[session_selector, role_state, user_state],
-            outputs=[session_selector, session_state, chatbot, session_meta, response_timer],
+            inputs=[session_radio, app_state],
+            outputs=[session_radio, session_state, chatbot, session_meta, response_timer],
         )
         delete_session_btn.click(
             remove_session,
-            inputs=[session_selector, role_state, user_state],
-            outputs=[session_selector, session_state, chatbot, session_meta, response_timer],
+            inputs=[session_radio, app_state],
+            outputs=[session_radio, session_state, chatbot, session_meta, response_timer],
         )
+
+        # Document tools
+        ingest_btn.click(
+            ingest_and_refresh,
+            inputs=doc_upload,
+            outputs=[doc_list, doc_overview],
+        )
+        doc_delete.click(
+            delete_and_refresh,
+            inputs=doc_list,
+            outputs=[doc_list, doc_overview],
+        )
+        doc_list.change(
+            lambda doc: doc or "Select a document to preview.",
+            inputs=doc_list,
+            outputs=metadata,
+        )
+
+        # Help navigation
+        help_btn.click(
+            lambda state: toggle_page("help", state),
+            inputs=app_state,
+            outputs=[app_state, login_view, workspace, help_view, search_view],
+        )
+        back_to_search.click(
+            lambda state: toggle_page("search", state),
+            inputs=app_state,
+            outputs=[app_state, login_view, workspace, help_view, search_view],
+        )
+        back_to_help_btn.click(
+            lambda state: toggle_page("help", state),
+            inputs=app_state,
+            outputs=[app_state, login_view, workspace, help_view, search_view],
+        )
+
+        # Logout
         logout_btn.click(
             logout,
-            inputs=role_state,
+            inputs=app_state,
             outputs=[
-                login_box,
-                main_interface,
-                status,
-                role_state,
-                chatbot,
-                doc_list,
-                session_selector,
+                app_state,
+                login_view,
+                workspace,
+                login_error,
+                user_badge,
+                role_badge,
+                session_radio,
                 session_state,
+                chatbot,
                 session_meta,
                 response_timer,
+                user_state,
+                role_state,
             ],
+        )
+
+        # Configure document tools after login
+        app_state.change(
+            configure_doc_tools,
+            inputs=app_state,
+            outputs=[ingest_btn, doc_upload, doc_delete, metadata, doc_list, doc_overview, admin_hint],
         )
 
     return demo
 
 
-def main() -> None:
-    """Start the Gradio application."""
-
-    _monkeypatch_gradio_api_info()
-    logger.info("Launching Gradio app on 0.0.0.0:7860")
-    demo = build_ui()
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=SHARE_INTERFACE, show_api=False)
+app = build_app()
 
 
 if __name__ == "__main__":
-    main()
+    app.launch(share=SHARE_INTERFACE)
