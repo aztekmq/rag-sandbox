@@ -634,10 +634,25 @@ def build_ui() -> gr.Blocks:
                 """,
                 elem_classes=["card-title"],
             )
-            role = gr.Radio(["user", "admin"], label="Login as", value="user", elem_classes=["pill-input"])
-            user = gr.Textbox(label="Username", placeholder="your.name", elem_classes=["text-input"])
-            pwd = gr.Textbox(label="Password", type="password", placeholder="••••••••", elem_classes=["text-input"])
-            login_btn = gr.Button("Enter Workspace", elem_classes=["primary-btn"])
+            with gr.Row(elem_classes=["login-grid"]):
+                role = gr.Radio(
+                    ["user", "admin"],
+                    label="Login as",
+                    value="user",
+                    elem_classes=["pill-input"],
+                )
+                user = gr.Textbox(
+                    label="Username",
+                    placeholder="your.name",
+                    elem_classes=["text-input"],
+                )
+                pwd = gr.Textbox(
+                    label="Password",
+                    type="password",
+                    placeholder="••••••••",
+                    elem_classes=["text-input"],
+                )
+            login_btn = gr.Button("Enter Workspace", elem_classes=["primary-btn", "full-width"])
 
         status = gr.Markdown(visible=False, elem_classes=["status-bar"])
 
