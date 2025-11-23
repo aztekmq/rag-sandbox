@@ -537,6 +537,8 @@ button.ghost {background: transparent; border: 1px solid #2c3342; color: #e8ebf1
 def build_app() -> gr.Blocks:
     """Create the Blocks application with conditional rendering."""
 
+    logger.info("Initializing Gradio Blocks interface with custom theming and verbose instrumentation")
+
     with gr.Blocks(css=CUSTOM_CSS, theme=gr.themes.Soft()) as demo:
         app_state = gr.State(_initial_state())
         user_state = gr.State("")
@@ -562,8 +564,8 @@ def build_app() -> gr.Blocks:
                     gr.Markdown("### AI Search", elem_classes=["no-margin"])
                     logout_btn = gr.Button("Logout", variant="secondary", elem_classes=["ghost"], scale=0)
                 with gr.Row():
-                    user_badge = gr.Markdown("", elem_classes=["status"], min_width=0)
-                    role_badge = gr.Markdown("", elem_classes=["status"], min_width=0)
+                    user_badge = gr.Markdown("", elem_classes=["status"])
+                    role_badge = gr.Markdown("", elem_classes=["status"])
                 new_session_btn = gr.Button("New Search / Session", elem_classes=["primary"], variant="primary")
                 session_radio = gr.Radio(label="Recent Sessions", choices=[], interactive=True)
                 session_meta = gr.Markdown("Select a session to begin.", elem_classes=["status"])
