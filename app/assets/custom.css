@@ -18,9 +18,9 @@ body {
 }
 
 .gradio-container {
-  width: min(900px, calc(100% - 16px));
+  width: min(880px, calc(100% - 10px));
   margin: 0 auto;
-  padding: 10px 8px 20px;
+  padding: 6px 6px 10px;
 }
 
 .page-title {
@@ -30,40 +30,41 @@ body {
   background: linear-gradient(120deg, #0b61ff, #2dd5ff);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  margin: 6px auto 8px;
+  margin: 2px auto 4px;
 }
 
 .card {
   background: var(--color-surface);
   border-radius: var(--radius-lg);
-  padding: 10px 10px;
+  padding: 6px 8px;
   box-shadow: var(--shadow-soft);
   border: 1px solid rgba(0, 0, 0, 0.04);
 }
 
 .card-title {
   color: var(--color-text);
-  margin: 4px 0 6px;
+  margin: 2px 0 4px;
 }
 
 .doc-panel {
-  gap: 14px;
-}
-
-.login-card {
-  max-width: 880px;
-  margin: 8px auto 14px;
   gap: 8px;
 }
 
+.login-card {
+  max-width: 860px;
+  margin: 4px auto 8px;
+  gap: 6px;
+}
+
 .workspace {
-  gap: 16px;
+  gap: 8px;
 }
 
 .workspace-header {
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
+  padding: 4px 6px;
 }
 
 .badge {
@@ -74,8 +75,8 @@ body {
 
 .workspace-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) 1fr;
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
 }
 
 .sidebar {
@@ -83,9 +84,9 @@ body {
   border: 1px solid #e8ecf5;
   box-shadow: var(--shadow-soft);
   position: sticky;
-  top: 12px;
+  top: 6px;
   height: fit-content;
-  max-height: calc(100vh - 150px);
+  max-height: calc(100vh - 120px);
   overflow: auto;
 }
 
@@ -93,26 +94,26 @@ body {
   color: var(--color-text);
   background: #f9fbff;
   border-radius: var(--radius-sm);
-  padding: 12px;
+  padding: 8px;
   border: 1px solid #e5eaf5;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 .sidebar-btn {
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 .session-dropdown {
-  margin-top: 6px;
+  margin-top: 2px;
 }
 
 .session-meta {
   font-size: 0.9rem;
-  line-height: 1.3;
+  line-height: 1.2;
 }
 
 .session-actions {
-  gap: 8px;
+  gap: 6px;
 }
 
 .content-shell {
@@ -120,38 +121,40 @@ body {
   border: 1px solid #e3e7ee;
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(8px);
+  padding: 6px 8px 10px;
 }
 
 .status-bar {
   background: #f1f2f6;
   color: var(--color-text);
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
+  padding: 4px 8px;
   border: 1px solid #e1e3e8;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .timer-bar {
   text-align: right;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .tabset {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .muted {
   color: var(--color-muted);
-  font-size: 0.95rem;
+  font-size: 0.93rem;
+  margin-bottom: 2px;
 }
 
 .doc-studio-grid {
   align-items: stretch;
-  gap: 16px;
+  gap: 10px;
 }
 
 .library-overview {
-  min-height: 90px;
+  min-height: 70px;
   background: linear-gradient(160deg, #f8fafc, #eef2ff);
   border: 1px solid #e1e4ef;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
@@ -169,19 +172,19 @@ body {
 .chat-frame {
   background: #fafbff !important;
   border: 1px solid #e1e4ef !important;
-  min-height: 280px;
+  min-height: 220px;
 }
 
 .chat-hero {
   text-align: center;
-  margin: 4px auto 8px;
+  margin: 2px auto 4px;
   color: var(--color-text);
   font-weight: 700;
 }
 
 .chat-input-row {
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
 }
 
 .icon-btn button {
@@ -189,7 +192,7 @@ body {
 }
 
 .chat-input textarea {
-  min-height: 70px;
+  min-height: 60px;
   resize: vertical;
 }
 
@@ -204,8 +207,8 @@ body {
 
 .login-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px;
 }
 
 .primary-btn,
@@ -214,7 +217,7 @@ body {
   border-radius: var(--radius-sm) !important;
   font-weight: 600 !important;
   letter-spacing: 0.01em;
-  padding: 8px 12px !important;
+  padding: 6px 10px !important;
 }
 
 .primary-btn {
@@ -237,18 +240,18 @@ body {
 
 .pill-input label > span {
   border-radius: 16px !important;
-  padding: 8px 12px !important;
+  padding: 6px 10px !important;
 }
 
 .no-margin {
   margin-bottom: 0 !important;
 }
 
-  @media (max-width: 900px) {
-    .workspace-header {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 10px;
+@media (max-width: 900px) {
+  .workspace-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
   }
 
   .workspace-layout {
@@ -257,9 +260,10 @@ body {
 
   .sidebar {
     position: relative;
+    max-height: none;
   }
 
-    .gradio-container {
-      padding: 10px 8px 16px;
-    }
+  .gradio-container {
+    padding: 6px 6px 10px;
   }
+}
