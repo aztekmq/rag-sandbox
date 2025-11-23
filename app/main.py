@@ -13,8 +13,12 @@ from __future__ import annotations
 
 import inspect
 import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Tuple
 
 import gradio as gr
 import gradio.blocks as gr_blocks
@@ -26,6 +30,135 @@ from app.config import PDF_DIR, SHARE_INTERFACE
 from app.rag_chain import delete_document, get_documents_list, ingest_pdfs, query_rag
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SessionRecord:
+    """Represents a conversational session for a specific user and role."""
+
+    session_id: str
+    title: str
+    history: list[tuple[str, str]] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    updated_at: datetime = field(default_factory=datetime.utcnow)
+
+    def as_choice(self) -> tuple[str, str]:
+        """Return a Gradio-friendly ``(label, value)`` tuple for dropdowns."""
+
+        timestamp = self.updated_at.strftime("%b %d • %H:%M")
+        label = f"{self.title} · {timestamp}"
+        return label, self.session_id
+
+
+SESSION_STORE: Dict[str, Dict[str, SessionRecord]] = {}
+
+
+def _session_key(role: str | None, username: str | None) -> str:
+    """Build a consistent key for storing sessions per user and role."""
+
+    safe_role = (role or "user").lower()
+    safe_user = (username or safe_role).strip() or safe_role
+    key = f"{safe_role}:{safe_user}"
+    logger.debug("Computed session bucket key: %s", key)
+    return key
+
+
+def _get_session_bucket(role: str, username: str) -> Dict[str, SessionRecord]:
+    """Return the session bucket for the given role/user, creating it if missing."""
+
+    key = _session_key(role, username)
+    if key not in SESSION_STORE:
+        logger.info("Initializing session bucket for %s", key)
+        SESSION_STORE[key] = {}
+    return SESSION_STORE[key]
+
+
+def _format_session_title(bucket: Dict[str, SessionRecord]) -> str:
+    """Generate a human-readable session title based on bucket size."""
+
+    next_index = len(bucket) + 1
+    title = f"Conversation {next_index}"
+    logger.debug("Generated session title: %s", title)
+    return title
+
+
+def _ensure_default_session(role: str, username: str) -> SessionRecord:
+    """Ensure at least one session exists for the user, returning the active record."""
+
+    bucket = _get_session_bucket(role, username)
+    if bucket:
+        logger.debug("Session bucket already populated for %s", _session_key(role, username))
+        return next(iter(bucket.values()))
+
+    session_id = str(uuid.uuid4())
+    record = SessionRecord(session_id=session_id, title=_format_session_title(bucket))
+    bucket[session_id] = record
+    logger.info("Created default session %s for %s", session_id, _session_key(role, username))
+    return record
+
+
+def _format_session_meta(record: SessionRecord) -> str:
+    """Render a compact summary for the active session."""
+
+    duration = record.updated_at - record.created_at
+    return (
+        f"**Active session:** {record.title}\n"
+        f"Created: {record.created_at:%b %d %H:%M UTC} · Updated: {record.updated_at:%b %d %H:%M UTC}\n"
+        f"Turns: {len(record.history)} · Lifespan: {duration.total_seconds():.0f}s"
+    )
+
+
+def _list_session_choices(role: str, username: str) -> list[tuple[str, str]]:
+    """Return display choices for all sessions scoped to the provided user."""
+
+    bucket = _get_session_bucket(role, username)
+    choices = sorted(bucket.values(), key=lambda rec: rec.updated_at, reverse=True)
+    logger.debug("Listing %d session choices for %s", len(choices), _session_key(role, username))
+    return [record.as_choice() for record in choices]
+
+
+def _persist_history(session_id: str, role: str, username: str, history: list[tuple[str, str]]):
+    """Persist chat history to the in-memory store with verbose logging."""
+
+    bucket = _get_session_bucket(role, username)
+    if session_id not in bucket:
+        logger.warning("Session %s missing for %s; creating on-the-fly", session_id, _session_key(role, username))
+        bucket[session_id] = SessionRecord(session_id=session_id, title=_format_session_title(bucket))
+
+    bucket[session_id].history = history
+    bucket[session_id].updated_at = datetime.utcnow()
+    logger.info(
+        "Persisted %d turns to session %s for %s", len(history), session_id, _session_key(role, username)
+    )
+
+
+def _load_session(role: str, username: str, session_id: str | None) -> SessionRecord:
+    """Load a session record, falling back to the default if the ID is missing."""
+
+    bucket = _get_session_bucket(role, username)
+    if session_id and session_id in bucket:
+        logger.debug(
+            "Loaded requested session %s for %s", session_id, _session_key(role, username)
+        )
+        return bucket[session_id]
+
+    logger.info("Requested session not found; returning default for %s", _session_key(role, username))
+    return _ensure_default_session(role, username)
+
+
+def _delete_session(role: str, username: str, session_id: str | None) -> SessionRecord:
+    """Delete a session and return the next available record."""
+
+    bucket = _get_session_bucket(role, username)
+    if session_id and session_id in bucket:
+        bucket.pop(session_id)
+        logger.info("Deleted session %s for %s", session_id, _session_key(role, username))
+    elif session_id:
+        logger.warning(
+            "Attempted to delete nonexistent session %s for %s", session_id, _session_key(role, username)
+        )
+
+    return _ensure_default_session(role, username)
 
 
 def login(
@@ -215,21 +348,122 @@ def ingest_and_refresh(files: list[gr.File | str | Path] | None) -> tuple[gr.upd
     return refresh_library(status)
 
 
-def respond(message: str, history: list[list[str]], role_str: str):
-    """Generate a response using the RAG engine."""
+def _session_selection_payload(role: str, username: str, record: SessionRecord) -> tuple:
+    """Return updates for session selection UI when a session changes."""
 
-    logger.info("Received query from %s role: %s", role_str or "unknown", message)
-    answer = query_rag(message)
-    history.append((message, answer))
-    return "", history
+    choices = _list_session_choices(role, username)
+    meta = _format_session_meta(record)
+    logger.debug(
+        "Prepared session payload for %s with %d choices", _session_key(role, username), len(choices)
+    )
+    return (
+        gr.update(choices=choices, value=record.session_id),
+        record.session_id,
+        gr.update(value=record.history),
+        meta,
+        "Response time: --",
+    )
 
 
-def logout(role_str: str) -> tuple[gr.update, gr.update, gr.update, str, gr.update, gr.update]:
+def hydrate_sessions(role: str, username: str) -> tuple:
+    """Ensure sessions exist after login and populate related widgets."""
+
+    record = _ensure_default_session(role, username)
+    logger.info("Hydrating sessions for %s", _session_key(role, username))
+    return _session_selection_payload(role, username, record)
+
+
+def start_new_session(role: str, username: str) -> tuple:
+    """Create a brand-new session, returning updates for the selection UI."""
+
+    bucket = _get_session_bucket(role, username)
+    session_id = str(uuid.uuid4())
+    record = SessionRecord(session_id=session_id, title=_format_session_title(bucket))
+    bucket[session_id] = record
+    logger.info("Started new session %s for %s", session_id, _session_key(role, username))
+    return _session_selection_payload(role, username, record)
+
+
+def select_session(session_id: str, role: str, username: str) -> tuple:
+    """Switch the active session and surface its history in the chat UI."""
+
+    record = _load_session(role, username, session_id)
+    logger.info("Switching to session %s for %s", record.session_id, _session_key(role, username))
+    return _session_selection_payload(role, username, record)
+
+
+def remove_session(session_id: str | None, role: str, username: str) -> tuple:
+    """Delete the selected session and refresh selection controls."""
+
+    record = _delete_session(role, username, session_id)
+    logger.info("Session %s removed; activating %s for %s", session_id, record.session_id, _session_key(role, username))
+    return _session_selection_payload(role, username, record)
+
+
+def clear_session_history(session_id: str, role: str, username: str) -> tuple:
+    """Clear the active session while keeping the conversation record available."""
+
+    record = _load_session(role, username, session_id)
+    logger.info(
+        "Clearing history for session %s belonging to %s", record.session_id, _session_key(role, username)
+    )
+    _persist_history(record.session_id, role, username, [])
+    refreshed = _load_session(role, username, record.session_id)
+    meta = _format_session_meta(refreshed)
+    return gr.update(value=[]), "Response time: --", refreshed.session_id, meta
+
+
+def respond(
+    message: str,
+    history: list[list[str]] | list[tuple[str, str]] | None,
+    role_str: str,
+    session_id: str,
+    username: str,
+):
+    """Generate a response using the RAG engine while streaming status updates."""
+
+    sanitized = (message or "").strip()
+    active_role = role_str or "user"
+    active_user = username or active_role
+    record = _load_session(active_role, active_user, session_id)
+
+    if not sanitized:
+        logger.warning("Empty prompt submitted for session %s", record.session_id)
+        meta = _format_session_meta(record)
+        return "", record.history, "Please enter a prompt to continue.", record.session_id, meta
+
+    logger.info(
+        "Received query for session %s belonging to %s", record.session_id, _session_key(active_role, active_user)
+    )
+    start_time = time.perf_counter()
+
+    existing_history = [(turn[0], turn[1]) for turn in (history or [])]
+    working_history: list[tuple[str, str]] = list(existing_history)
+    working_history.append((sanitized, ""))
+    _persist_history(record.session_id, active_role, active_user, working_history)
+    meta = _format_session_meta(record)
+    yield "", working_history, "Gathering response...", record.session_id, meta
+
+    answer = query_rag(sanitized)
+    elapsed = time.perf_counter() - start_time
+    working_history[-1] = (sanitized, answer)
+    _persist_history(record.session_id, active_role, active_user, working_history)
+    meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
+    logger.info(
+        "Response for session %s completed in %.3f seconds", record.session_id, elapsed
+    )
+    return "", working_history, f"Response time: {elapsed:.2f}s", record.session_id, meta
+
+
+def logout(
+    role_str: str,
+) -> tuple[gr.update, gr.update, gr.update, str, gr.update, gr.update, gr.update, str, str, gr.update]:
     """Return to the landing page and clear transient state."""
 
     logger.info("Logout requested for role: %s", role_str or "unknown")
     cleared_chat = gr.update(value=[])
     cleared_docs = gr.update(choices=[], value=None)
+    cleared_sessions = gr.update(choices=[], value=None)
     return (
         gr.update(visible=True),
         gr.update(visible=False),
@@ -237,6 +471,10 @@ def logout(role_str: str) -> tuple[gr.update, gr.update, gr.update, str, gr.upda
         "",
         cleared_chat,
         cleared_docs,
+        cleared_sessions,
+        "",
+        "Select a session to begin.",
+        "Response time: --",
     )
 
 
@@ -378,6 +616,7 @@ def build_ui() -> gr.Blocks:
     ) as demo:
         role_state = gr.State("")
         user_state = gr.State("")
+        session_state = gr.State("")
 
         gr.Markdown(
             """
@@ -412,23 +651,28 @@ def build_ui() -> gr.Blocks:
                 with gr.Column(scale=3, elem_classes=["card", "sidebar"]):
                     gr.Markdown("#### Your sessions", elem_classes=["card-title", "no-margin"])
                     gr.Markdown(
-                        "Manage conversations and quickly return to recent threads. This panel mirrors the familiar ChatGPT navigation while staying responsive across devices.",
+                        "Manage conversations and quickly return to recent threads unique to your login. Use the controls below to open, start, or delete sessions without losing context.",
                         elem_classes=["muted"],
                     )
-                    gr.Markdown(
-                        """
-                        - Background check requirements
-                        - Collaboration and civic engagement
-                        - Empty message clarification
-                        - BCC director at Vanderbilt
-                        - Polite phrasing suggestions
-                        - Meeting subject ideas
-                        - RAG explained simply
-                        - Back in the office on a project
-                        """,
-                        elem_classes=["session-list"],
+                    session_selector = gr.Dropdown(
+                        label="Saved conversations",
+                        choices=[],
+                        value=None,
+                        interactive=True,
+                        elem_classes=["text-input", "session-dropdown"],
                     )
-                    gr.Button("New conversation", elem_classes=["primary-btn", "full-width", "sidebar-btn"], variant="primary")
+                    session_meta = gr.Markdown(elem_classes=["status-bar", "session-meta"], value="Select a session to begin.")
+                    with gr.Row(elem_classes=["session-actions"]):
+                        new_session_btn = gr.Button(
+                            "New conversation",
+                            elem_classes=["primary-btn", "full-width"],
+                            variant="primary",
+                        )
+                        delete_session_btn = gr.Button(
+                            "Delete session",
+                            elem_classes=["danger-btn", "full-width"],
+                            variant="secondary",
+                        )
 
                 with gr.Column(scale=9, elem_classes=["card", "content-shell"]):
                     with gr.Tabs(elem_classes=["tabset"]) as tabs:
@@ -442,6 +686,10 @@ def build_ui() -> gr.Blocks:
                             gr.Markdown(
                                 "## What can I help with?",
                                 elem_classes=["chat-hero"],
+                            )
+                            response_timer = gr.Markdown(
+                                "Response time: --",
+                                elem_classes=["status-bar", "timer-bar"],
                             )
                             chatbot = gr.Chatbot(
                                 height=420,
@@ -494,8 +742,17 @@ def build_ui() -> gr.Blocks:
                                     )
                                     index_btn = gr.Button("Ingest PDFs", elem_classes=["primary-btn", "full-width"])
 
-            msg.submit(respond, [msg, chatbot, role_state], [msg, chatbot])
-            clear.click(lambda: None, None, chatbot, queue=False)
+            msg.submit(
+                respond,
+                [msg, chatbot, role_state, session_state, user_state],
+                [msg, chatbot, response_timer, session_state, session_meta],
+            )
+            clear.click(
+                clear_session_history,
+                inputs=[session_state, role_state, user_state],
+                outputs=[chatbot, response_timer, session_state, session_meta],
+                queue=False,
+            )
 
         login_btn.click(
             login,
@@ -520,16 +777,46 @@ def build_ui() -> gr.Blocks:
             lambda _: gr.update(visible=True),
             inputs=role_state,
             outputs=status,
+        ).then(
+            hydrate_sessions,
+            inputs=[role_state, user_state],
+            outputs=[session_selector, session_state, chatbot, session_meta, response_timer],
         )
 
         refresh_btn.click(refresh_library, None, [doc_list, library_overview])
         index_btn.click(ingest_and_refresh, file_upload, [doc_list, library_overview])
         file_upload.change(refresh_library, None, [doc_list, library_overview])
         delete_btn.click(delete_and_refresh, doc_list, [doc_list, library_overview])
+        new_session_btn.click(
+            start_new_session,
+            inputs=[role_state, user_state],
+            outputs=[session_selector, session_state, chatbot, session_meta, response_timer],
+        )
+        session_selector.change(
+            select_session,
+            inputs=[session_selector, role_state, user_state],
+            outputs=[session_selector, session_state, chatbot, session_meta, response_timer],
+        )
+        delete_session_btn.click(
+            remove_session,
+            inputs=[session_selector, role_state, user_state],
+            outputs=[session_selector, session_state, chatbot, session_meta, response_timer],
+        )
         logout_btn.click(
             logout,
             inputs=role_state,
-            outputs=[login_box, main_interface, status, role_state, chatbot, doc_list],
+            outputs=[
+                login_box,
+                main_interface,
+                status,
+                role_state,
+                chatbot,
+                doc_list,
+                session_selector,
+                session_state,
+                session_meta,
+                response_timer,
+            ],
         )
 
     return demo
