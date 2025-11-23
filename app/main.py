@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Tuple, TypedDict
 
 import gradio as gr
 
@@ -26,6 +26,20 @@ from app.config import PDF_DIR, SHARE_INTERFACE
 from app.rag_chain import delete_document, get_documents_list, ingest_pdfs, query_rag
 
 logger = logging.getLogger(__name__)
+
+
+class AppState(TypedDict):
+    """State container shared across Gradio callbacks.
+
+    Using ``TypedDict`` prevents ambiguous JSON schema generation (which can
+    occur when plain ``dict`` is used) and improves downstream documentation
+    while keeping runtime behavior unchanged.
+    """
+
+    page: str
+    role: str
+    user: str
+    session_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +349,7 @@ def hydrate_sessions(role: str, username: str) -> tuple:
     )
 
 
-def start_new_session(state: dict) -> tuple:
+def start_new_session(state: AppState) -> tuple:
     """Create a brand-new session, returning updates for the selection UI."""
 
     role = state.get("role") or "user"
@@ -350,7 +364,7 @@ def start_new_session(state: dict) -> tuple:
     return gr.update(choices=choices, value=session_id), session_id, [], meta, "Response time: --"
 
 
-def select_session(session_id: str, state: dict) -> tuple:
+def select_session(session_id: str, state: AppState) -> tuple:
     """Switch the active session and surface its history in the chat UI."""
 
     role = state.get("role") or "user"
@@ -362,7 +376,7 @@ def select_session(session_id: str, state: dict) -> tuple:
     return gr.update(choices=choices, value=record.session_id), record.session_id, record.history, meta, "Response time: --"
 
 
-def remove_session(session_id: str | None, state: dict) -> tuple:
+def remove_session(session_id: str | None, state: AppState) -> tuple:
     """Delete the selected session and refresh selection controls."""
 
     role = state.get("role") or "user"
@@ -374,7 +388,7 @@ def remove_session(session_id: str | None, state: dict) -> tuple:
     return gr.update(choices=choices, value=record.session_id), record.session_id, record.history, meta, "Response time: --"
 
 
-def clear_session_history(session_id: str, state: dict) -> tuple:
+def clear_session_history(session_id: str, state: AppState) -> tuple:
     """Clear the active session while keeping the conversation record available."""
 
     role = state.get("role") or "user"
@@ -390,7 +404,7 @@ def clear_session_history(session_id: str, state: dict) -> tuple:
 def respond(
     message: str,
     history: list[list[str]] | list[tuple[str, str]] | None,
-    state: dict,
+    state: AppState,
     session_id: str,
     username: str,
 ):
@@ -430,22 +444,21 @@ def respond(
 # ---------------------------------------------------------------------------
 
 
-def _set_page(state: dict, page: str) -> dict:
+def _set_page(state: AppState, page: str) -> AppState:
     """Return a new state dict with the page updated."""
 
-    new_state = dict(state)
-    new_state["page"] = page
+    new_state: AppState = {**state, "page": page}
     logger.debug("Page transition to %s with state %s", page, new_state)
     return new_state
 
 
-def _initial_state() -> dict:
+def _initial_state() -> AppState:
     """Default app state used at startup and after logout."""
 
     return {"page": "login", "role": "", "user": "", "session_id": ""}
 
 
-def attempt_login(username: str, password: str, state: dict) -> tuple:
+def attempt_login(username: str, password: str, state: AppState) -> tuple:
     """Authenticate and transition to the search page when successful."""
 
     role = _detect_role(username, password)
@@ -495,7 +508,7 @@ def attempt_login(username: str, password: str, state: dict) -> tuple:
     )
 
 
-def logout(state: dict) -> tuple:
+def logout(state: AppState) -> tuple:
     """Return to the landing page and clear transient state."""
 
     logger.info("Logout requested for role: %s", state.get("role") or "unknown")
@@ -517,7 +530,7 @@ def logout(state: dict) -> tuple:
     )
 
 
-def toggle_page(target: str, state: dict) -> tuple:
+def toggle_page(target: str, state: AppState) -> tuple:
     """Toggle between search and help views while remaining logged in."""
 
     updated = _set_page(state, target)
@@ -530,7 +543,7 @@ def toggle_page(target: str, state: dict) -> tuple:
     )
 
 
-def configure_doc_tools(state: dict) -> tuple:
+def configure_doc_tools(state: AppState) -> tuple:
     """Configure Document Tools interactivity based on role."""
 
     is_admin = state.get("role") == "admin"
