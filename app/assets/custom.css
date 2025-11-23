@@ -73,7 +73,7 @@ body {
 
 .workspace-layout {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: minmax(260px, 320px) 1fr;
   gap: 16px;
 }
 
@@ -84,6 +84,8 @@ body {
   position: sticky;
   top: 12px;
   height: fit-content;
+  max-height: calc(100vh - 150px);
+  overflow: auto;
 }
 
 .session-list {
@@ -97,6 +99,19 @@ body {
 
 .sidebar-btn {
   margin-top: 6px;
+}
+
+.session-dropdown {
+  margin-top: 6px;
+}
+
+.session-meta {
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.session-actions {
+  gap: 8px;
 }
 
 .content-shell {
@@ -113,6 +128,11 @@ body {
   padding: 10px 12px;
   border: 1px solid #e1e3e8;
   margin-top: 10px;
+}
+
+.timer-bar {
+  text-align: right;
+  margin-top: 8px;
 }
 
 .tabset {
