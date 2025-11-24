@@ -577,7 +577,7 @@ def _format_eta_label(progress: GenerationProgress) -> str:
         return "ETA: --"
 
     if progress.stage in {"retrieval", "prefill_start"}:
-        return "ETA: calculating…"
+        return ""
 
     if progress.stage == "prefill_complete":
         return "ETA: estimating…"
@@ -588,7 +588,7 @@ def _format_eta_label(progress: GenerationProgress) -> str:
     if progress.stage == "done":
         return "ETA: complete"
 
-    return "ETA: calculating…"
+    return ""
 
 
 def _stage_label(progress: GenerationProgress) -> str:
@@ -597,7 +597,7 @@ def _stage_label(progress: GenerationProgress) -> str:
     if progress.stage == "retrieval":
         return "Retrieving context…"
     if progress.stage in {"prefill_start"}:
-        return "Preparing model input…"
+        return ""
     if progress.stage in {"prefill_complete", "generation"}:
         return "Generating answer…"
     if progress.stage == "done":
