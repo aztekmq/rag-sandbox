@@ -569,6 +569,27 @@ def _format_eta_status(progress: GenerationProgress) -> str:
     return progress.detail or "Working…"
 
 
+def _format_eta_label(progress: GenerationProgress) -> str:
+    """Compute a compact ETA label for the dedicated indicator widget."""
+
+    if progress.stage == "error":
+        return "ETA: --"
+
+    if progress.stage in {"retrieval", "prefill_start"}:
+        return "ETA: calculating…"
+
+    if progress.stage == "prefill_complete":
+        return "ETA: estimating…"
+
+    if progress.stage == "generation" and progress.eta_seconds is not None:
+        return f"ETA: ~{progress.eta_seconds:.1f}s"
+
+    if progress.stage == "done":
+        return "ETA: complete"
+
+    return "ETA: calculating…"
+
+
 def _stage_label(progress: GenerationProgress) -> str:
     """Map backend stage codes to user-facing stage descriptions."""
 
@@ -602,8 +623,16 @@ def respond(
     state: AppState,
     session_id: str,
     username: str,
+    start_time: float | None,
 ):
-    """Generate a response using the RAG engine while streaming status updates."""
+    """Generate a response using the RAG engine while streaming status updates.
+
+    The ``start_time`` parameter captures when the user initiated the
+    submission so telemetry labels (elapsed and ETA) remain consistent across
+    UI updates even when Gradio batches callbacks. This function intentionally
+    emits explicit updates for those indicators to keep the client-side display
+    authoritative and avoid stale browser-calculated guesses.
+    """
 
     sanitized = (message or "").strip()
     active_role = state.get("role") or "user"
@@ -622,12 +651,14 @@ def respond(
             "Ready to search.",
             False,
             gr.update(visible=False, value=""),
+            gr.update(value="Elapsed: --", visible=False),
+            gr.update(value="ETA: --", visible=False),
         )
 
     logger.info(
         "Received query for session %s belonging to %s", record.session_id, _session_key(active_role, active_user)
     )
-    start_time = time.perf_counter()
+    active_start = start_time or time.perf_counter()
 
     existing_history = [(turn[0], turn[1]) for turn in (history or [])]
     working_history: list[tuple[str, str]] = list(existing_history)
@@ -642,6 +673,9 @@ def respond(
         working_history[-1] = (sanitized, partial_answer)
         status_text = _format_eta_status(progress)
         stage_text = _stage_label(progress)
+        elapsed_seconds = (time.perf_counter() - active_start) if active_start else None
+        elapsed_label = _format_elapsed_label(elapsed_seconds)
+        eta_label = _format_eta_label(progress)
         _persist_history(record.session_id, active_role, active_user, working_history)
         meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
         if progress.stage == "error":
@@ -659,6 +693,8 @@ def respond(
                     value=f"{status_text} — Try again.",
                     visible=True,
                 ),
+                gr.update(value=elapsed_label, visible=True),
+                gr.update(value=eta_label, visible=False),
             )
             return
 
@@ -674,9 +710,11 @@ def respond(
             stage_text,
             error_detected,
             gr.update(visible=False, value=""),
+            gr.update(value=elapsed_label, visible=True),
+            gr.update(value=eta_label, visible=True),
         )
 
-    elapsed = time.perf_counter() - start_time
+    elapsed = time.perf_counter() - active_start
     working_history[-1] = (sanitized, partial_answer)
     _persist_history(record.session_id, active_role, active_user, working_history)
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
@@ -690,6 +728,8 @@ def respond(
         "Finalizing…",
         error_detected,
         gr.update(visible=False, value=""),
+        gr.update(value=_format_elapsed_label(elapsed), visible=True),
+        gr.update(value="ETA: complete", visible=not error_detected),
     )
 
 
@@ -1105,135 +1145,36 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
 TIMER_SCRIPT = """
 <script>
 (() => {
-  const HISTORY_KEY = "rag_latency_history";
-  const MAX_SAMPLES = 20;
-  let timerId = null;
-  let startTimestamp = null;
-  let lastStage = "";
+  const LOG_PREFIX = "rag-timer";
 
-  const loadHistory = () => {
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY);
-      return raw ? JSON.parse(raw) : [];
-    } catch (err) {
-      console.warn("Unable to parse latency history", err);
-      return [];
-    }
+  const log = (...args) => {
+    console.debug(`[${LOG_PREFIX}]`, ...args);
   };
 
-  const saveSample = (ms) => {
-    const history = loadHistory();
-    history.push(ms);
-    if (history.length > MAX_SAMPLES) {
-      history.splice(0, history.length - MAX_SAMPLES);
-    }
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-  };
-
-  const formatElapsed = (ms) => {
-    const totalSeconds = ms / 1000;
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = (totalSeconds - minutes * 60).toFixed(1).padStart(4, "0");
-    return `${String(minutes).padStart(2, "0")}:${seconds}`;
-  };
-
-  const hideEta = () => {
-    const etaEl = document.querySelector("#eta-indicator");
-    if (etaEl) {
-      etaEl.textContent = "ETA: --";
-      etaEl.style.display = "none";
-    }
-  };
-
-  const renderTelemetry = () => {
-    if (!startTimestamp) return;
-    const elapsedMs = Date.now() - startTimestamp;
+  const ready = () => {
+    const stageEl = document.querySelector("#stage-indicator");
     const elapsedEl = document.querySelector("#elapsed-indicator");
     const etaEl = document.querySelector("#eta-indicator");
-    if (elapsedEl) {
-      elapsedEl.textContent = `Elapsed: ${formatElapsed(elapsedMs)}`;
-      elapsedEl.style.display = "";
-    }
-    if (etaEl) {
-      const history = loadHistory();
-      if (history.length < 3) {
-        etaEl.textContent = "ETA: calculating…";
-        etaEl.style.display = "";
-      } else {
-        const average = history.reduce((sum, value) => sum + value, 0) / history.length;
-        const remaining = Math.max(0, average - elapsedMs);
-        etaEl.textContent = `ETA: ~${(remaining / 1000).toFixed(1)}s`;
-        etaEl.style.display = "";
-      }
-    }
-  };
-
-  const startTimer = () => {
-    if (timerId) clearInterval(timerId);
-    startTimestamp = Date.now();
-    timerId = window.setInterval(renderTelemetry, 100);
-    renderTelemetry();
-  };
-
-  const stopTimer = (recordSample) => {
-    if (timerId) {
-      clearInterval(timerId);
-      timerId = null;
-    }
-    if (startTimestamp && recordSample) {
-      saveSample(Date.now() - startTimestamp);
-    }
-    startTimestamp = null;
-  };
-
-  const handleStageChange = (text) => {
-    const normalized = (text || "").toLowerCase();
-    if (!normalized) return;
-    if (normalized.startsWith("retrieving") || normalized.startsWith("preparing")) {
-      startTimer();
-      return;
-    }
-    if (normalized.startsWith("generating")) {
-      if (!startTimestamp) {
-        startTimer();
-      }
-      return;
-    }
-    if (normalized.startsWith("finalizing")) {
-      stopTimer(true);
-      return;
-    }
-    if (normalized.startsWith("error")) {
-      stopTimer(false);
-      hideEta();
-    }
-  };
-
-  const attach = () => {
-    const stageEl = document.querySelector("#stage-indicator");
-    const errorEl = document.querySelector("#error-banner");
-    if (!stageEl) {
-      window.setTimeout(attach, 400);
+    if (!stageEl || !elapsedEl || !etaEl) {
+      window.setTimeout(ready, 400);
       return;
     }
 
-    window.setInterval(() => {
-      const stageText = (stageEl.textContent || "").trim();
-      if (stageText !== lastStage) {
-        lastStage = stageText;
-        handleStageChange(stageText);
-      }
-      if (errorEl && errorEl.textContent.trim()) {
-        stopTimer(false);
-        hideEta();
-      }
-      if (startTimestamp) {
-        renderTelemetry();
-      }
-    }, 150);
+    const syncVisibility = () => {
+      const text = (stageEl.textContent || "").toLowerCase();
+      const working = text && !text.startsWith("ready") && !text.startsWith("session ready");
+      elapsedEl.style.display = working ? "" : "none";
+      etaEl.style.display = working ? "" : "none";
+      log("Updated indicator visibility", { working, text });
+    };
+
+    syncVisibility();
+
+    const observer = new MutationObserver(syncVisibility);
+    observer.observe(stageEl, { childList: true, subtree: true, characterData: true });
   };
 
-  attach();
+  ready();
 })();
 </script>
 """
@@ -1513,7 +1454,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             ],
         ).then(
             respond,
-            inputs=[hero_query, chatbot, app_state, session_state, user_state],
+            inputs=[hero_query, chatbot, app_state, session_state, user_state, start_time_state],
             outputs=[
                 hero_query,
                 chatbot,
@@ -1523,6 +1464,8 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 stage_md,
                 error_state,
                 error_banner,
+                elapsed_md,
+                eta_md,
             ],
         ).then(
             finalize_response_cycle,
@@ -1554,7 +1497,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             ],
         ).then(
             respond,
-            inputs=[hero_query, chatbot, app_state, session_state, user_state],
+            inputs=[hero_query, chatbot, app_state, session_state, user_state, start_time_state],
             outputs=[
                 hero_query,
                 chatbot,
@@ -1564,6 +1507,8 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 stage_md,
                 error_state,
                 error_banner,
+                elapsed_md,
+                eta_md,
             ],
         ).then(
             finalize_response_cycle,
