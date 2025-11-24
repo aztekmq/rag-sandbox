@@ -11,6 +11,7 @@ deployments.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, List, Tuple
@@ -245,6 +246,12 @@ class RagEngine:
     def stream_query(self, question: str, top_k: int = 4, max_tokens: int = 512) -> Generator[GenerationProgress, None, None]:
         """Stream retrieval and generation progress with live ETA estimates."""
 
+        logger.debug(
+            "Entering stream_query with question=%r, top_k=%d, max_tokens=%d",
+            question,
+            top_k,
+            max_tokens,
+        )
         logger.info("Querying vector store with question: %s", question)
         retrieval_start = time.perf_counter()
         query_embedding = embed_query(question)
