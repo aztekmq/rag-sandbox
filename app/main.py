@@ -181,15 +181,26 @@ def _ensure_default_session(role: str, username: str) -> SessionRecord:
     return record
 
 
+def _session_rows(role: str, username: str) -> list[list[str]]:
+    """Return tabular rows for rendering sessions alongside delete controls."""
+
+    choices = _list_session_choices(role, username)
+    rows = [[label, "✖"] for label, _ in choices]
+    logger.debug("Prepared %d session rows for display", len(rows))
+    return rows
+
+
 def _format_session_meta(record: SessionRecord) -> str:
-    """Render a compact summary for the active session."""
+    """Render a compact summary for the active session without rigid labels."""
 
     duration = record.updated_at - record.created_at
-    return (
-        f"**Active session:** {record.title}\n"
-        f"Created: {record.created_at:%b %d %H:%M UTC} · Updated: {record.updated_at:%b %d %H:%M UTC}\n"
+    summary = (
+        f"{record.title} — Created: {record.created_at:%b %d %H:%M UTC} · "
+        f"Updated: {record.updated_at:%b %d %H:%M UTC}\n"
         f"Turns: {len(record.history)} · Lifespan: {duration.total_seconds():.0f}s"
     )
+    logger.debug("Formatted session metadata for %s: %s", record.session_id, summary)
+    return summary
 
 
 def _safe_markdown(value: str = "", **kwargs) -> gr.Markdown:
@@ -349,17 +360,42 @@ def refresh_documents() -> list[str]:
     return docs
 
 
-def refresh_library(status: str | None = None) -> tuple[gr.update, str]:
-    """Return an updated document dropdown alongside a formatted overview."""
+def _build_document_rows(filter_text: str | None = None, docs: list[str] | None = None) -> list[list[str]]:
+    """Construct document table rows with lightweight metadata for display."""
+
+    documents = docs or refresh_documents()
+    query = (filter_text or "").strip().lower()
+    rows: list[list[str]] = []
+    for name in documents:
+        if query and query not in name.lower():
+            continue
+
+        path = PDF_DIR / name
+        file_type = (path.suffix or ".pdf").replace(".", "").upper() or "PDF"
+        try:
+            stats = path.stat()
+            size_kb = f"{stats.st_size / 1024:.1f} KB"
+            ingested = datetime.utcfromtimestamp(stats.st_mtime).strftime("%b %d %H:%M UTC")
+        except OSError:
+            size_kb = "—"
+            ingested = "—"
+
+        rows.append([name, file_type, size_kb, ingested, "✖"])
+
+    logger.debug("Prepared %d document rows after filtering for query %r", len(rows), query)
+    return rows
+
+
+def refresh_library(status: str | None = None, filter_text: str | None = None) -> tuple[list[list[str]], str]:
+    """Return updated document table rows alongside a formatted overview."""
 
     docs = refresh_documents()
-    default_choice = docs[0] if docs else None
     overview = _render_library_overview(docs)
     if status:
         overview = f"{status}\n\n{overview}"
 
-    logger.debug("Library state prepared with %d documents (default=%s)", len(docs), default_choice)
-    return gr.update(choices=docs, value=default_choice), overview
+    logger.debug("Library state prepared with %d documents", len(docs))
+    return _build_document_rows(filter_text, docs), overview
 
 
 def handle_delete(doc: str) -> str:
@@ -374,14 +410,66 @@ def delete_and_refresh(doc: str) -> tuple[gr.update, str]:
     """Delete a document and refresh the library snapshot for the UI."""
 
     status = handle_delete(doc)
-    return refresh_library(status)
+    rows, overview = refresh_library(status)
+    return gr.update(value=rows), overview
 
 
 def ingest_and_refresh(files: list[gr.File | str | Path] | None) -> tuple[gr.update, str]:
     """Upload PDFs, trigger indexing, and rehydrate the document dropdown."""
 
     status = upload_and_index(files)
-    return refresh_library(status)
+    rows, overview = refresh_library(status)
+    return gr.update(value=rows), overview
+
+
+def filter_documents(query: str | None) -> tuple[gr.update, str]:
+    """Filter the document grid with type-ahead search."""
+
+    rows, overview = refresh_library(filter_text=query)
+    return gr.update(value=rows), overview
+
+
+def handle_document_action(
+    selected: list[str] | str, event: gr.SelectData | None, query: str | None, state: AppState
+) -> tuple[gr.update, str]:
+    """React to document table clicks for selection or deletion."""
+
+    role = state.get("role") or "user"
+    filter_text = query or ""
+    row_index, col_index = 0, 0
+    if event is not None:
+        try:
+            row_index, col_index = event.index  # type: ignore[assignment]
+        except Exception:  # noqa: BLE001
+            row_index = getattr(event, "row", 0) or 0
+            col_index = getattr(event, "column", 0) or 0
+
+    docs = refresh_documents()
+    rows = _build_document_rows(filter_text, docs)
+    if not rows:
+        logger.info("Document action invoked with no rows; returning overview only")
+        return gr.update(value=rows), _render_library_overview(docs)
+
+    target_index = max(0, min(row_index, len(rows) - 1))
+    target_doc = rows[target_index][0]
+    logger.info(
+        "Document table click on row %d column %d for %s (role=%s)",
+        row_index,
+        col_index,
+        target_doc,
+        role,
+    )
+
+    if col_index == 4:
+        if role != "admin":
+            logger.warning("Non-admin attempted to delete document %s", target_doc)
+            return gr.update(value=rows), _render_library_overview(docs) + "\n\nAdmin-only delete."
+
+        status = handle_delete(target_doc)
+        updated_rows, overview = refresh_library(status, filter_text)
+        return gr.update(value=updated_rows), overview
+
+    return gr.update(value=rows), _render_library_overview(docs)
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +499,7 @@ def hydrate_sessions(role: str, username: str) -> tuple:
     meta = _format_session_meta(record)
     return (
         gr.update(choices=choices, value=record.session_id),
+        gr.update(value=_session_rows(role, username)),
         record.session_id,
         record.history,
         meta,
@@ -430,7 +519,14 @@ def start_new_session(state: AppState) -> tuple:
     logger.info("Started new session %s for %s", session_id, _session_key(role, username))
     choices = _list_session_choices(role, username)
     meta = _format_session_meta(record)
-    return gr.update(choices=choices, value=session_id), session_id, [], meta, "Response time: --"
+    return (
+        gr.update(choices=choices, value=session_id),
+        gr.update(value=_session_rows(role, username)),
+        session_id,
+        [],
+        meta,
+        "Response time: --",
+    )
 
 
 def select_session(session_id: str, state: AppState) -> tuple:
@@ -442,7 +538,14 @@ def select_session(session_id: str, state: AppState) -> tuple:
     logger.info("Switching to session %s for %s", record.session_id, _session_key(role, username))
     choices = _list_session_choices(role, username)
     meta = _format_session_meta(record)
-    return gr.update(choices=choices, value=record.session_id), record.session_id, record.history, meta, "Response time: --"
+    return (
+        gr.update(choices=choices, value=record.session_id),
+        gr.update(value=_session_rows(role, username)),
+        record.session_id,
+        record.history,
+        meta,
+        "Response time: --",
+    )
 
 
 def remove_session(session_id: str | None, state: AppState) -> tuple:
@@ -454,7 +557,14 @@ def remove_session(session_id: str | None, state: AppState) -> tuple:
     logger.info("Session %s removed; activating %s for %s", session_id, record.session_id, _session_key(role, username))
     choices = _list_session_choices(role, username)
     meta = _format_session_meta(record)
-    return gr.update(choices=choices, value=record.session_id), record.session_id, record.history, meta, "Response time: --"
+    return (
+        gr.update(choices=choices, value=record.session_id),
+        gr.update(value=_session_rows(role, username)),
+        record.session_id,
+        record.history,
+        meta,
+        "Response time: --",
+    )
 
 
 def clear_session_history(session_id: str, state: AppState) -> tuple:
@@ -468,6 +578,36 @@ def clear_session_history(session_id: str, state: AppState) -> tuple:
     refreshed = _load_session(role, username, record.session_id)
     meta = _format_session_meta(refreshed)
     return [], "Response time: --", refreshed.session_id, meta
+
+
+def handle_session_table_selection(
+    selected: list[str] | str, event: gr.SelectData | None, state: AppState
+) -> tuple:
+    """Route session table selections to view or delete actions."""
+
+    role = state.get("role") or "user"
+    username = state.get("user") or role
+    row_index, col_index = 0, 0
+    if event is not None:
+        try:
+            row_index, col_index = event.index  # type: ignore[assignment]
+        except Exception:  # noqa: BLE001 - fallback for unexpected event payloads
+            row_index = getattr(event, "row", 0) or 0
+            col_index = getattr(event, "column", 0) or 0
+
+    choices = _list_session_choices(role, username)
+    if not choices:
+        logger.warning("Session selection received without available sessions; rebuilding defaults")
+        return hydrate_sessions(role, username)
+
+    target_index = max(0, min(row_index, len(choices) - 1))
+    target_session = choices[target_index][1]
+    logger.info("Session table click on row %d column %d for session %s", row_index, col_index, target_session)
+
+    if col_index == 1:
+        return remove_session(target_session, state)
+
+    return select_session(target_session, state)
 
 
 def respond(
@@ -539,15 +679,24 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
             gr.update(visible=True),
             gr.update(visible=False),
             gr.update(visible=False),
+            gr.update(visible=False),
+            gr.update(visible=False),
             gr.update(value=""),
             gr.update(value=""),
             gr.update(choices=[], value=None),
+            gr.update(value=[]),
             "",
             [],
             "Select a session to begin.",
             "Response time: --",
             "",
             "",
+            gr.update(value=_build_document_rows()),
+            _render_library_overview([]),
+            "Browse and manage ingested documents.",
+            gr.update(interactive=False),
+            gr.update(interactive=False),
+            "Admin-only.",
         )
 
     safe_username = username or role.title()
@@ -558,10 +707,13 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         "session_id": "",
     }
     sessions = hydrate_sessions(role, safe_username)
+    doc_rows, doc_overview = refresh_library()
     logger.info("Login succeeded for %s; transitioning to search page", safe_username)
     return (
         new_state,
         gr.update(value="", visible=False),
+        gr.update(visible=False),
+        gr.update(visible=True),
         gr.update(visible=False),
         gr.update(visible=True),
         gr.update(visible=False),
@@ -574,6 +726,12 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         sessions[4],
         safe_username,
         role,
+        gr.update(value=doc_rows),
+        doc_overview,
+        "Browse and manage ingested documents.",
+        gr.update(interactive=role == "admin"),
+        gr.update(interactive=role == "admin"),
+        "Full access" if role == "admin" else "Read-only for non-admins.",
     )
 
 
@@ -587,20 +745,29 @@ def logout(state: AppState) -> tuple:
         gr.update(visible=True),
         gr.update(visible=False),
         gr.update(value="", visible=False),
+        gr.update(visible=False),
+        gr.update(visible=False),
         gr.update(value=""),
         gr.update(value=""),
         gr.update(choices=[], value=None),
+        gr.update(value=[]),
         "",
         [],
         "Select a session to begin.",
         "Response time: --",
         "",
         "",
+        gr.update(value=_build_document_rows()),
+        _render_library_overview([]),
+        "Browse and manage ingested documents.",
+        gr.update(interactive=False),
+        gr.update(interactive=False),
+        "Admin-only.",
     )
 
 
 def toggle_page(target: str, state: AppState) -> tuple:
-    """Toggle between search and help views while remaining logged in."""
+    """Toggle between search, help, and manage docs views while remaining logged in."""
 
     updated = _set_page(state, target)
     return (
@@ -608,26 +775,55 @@ def toggle_page(target: str, state: AppState) -> tuple:
         gr.update(visible=target == "login"),
         gr.update(visible=target != "login"),
         gr.update(visible=target == "help"),
-        gr.update(visible=target != "help"),
+        gr.update(visible=target == "search"),
+        gr.update(visible=target == "manage_docs"),
     )
 
 
 def configure_doc_tools(state: AppState) -> tuple:
-    """Configure Document Tools interactivity based on role."""
+    """Configure Manage Docs interactivity and populate the table based on role."""
 
     is_admin = state.get("role") == "admin"
-    tooltip = "Full access" if is_admin else "Admin-only"
-    logger.debug("Configuring document tools for %s", state.get("role") or "anonymous")
-    dropdown_update, overview = refresh_library()
+    tooltip = "Full access" if is_admin else "Read-only for non-admins."
+    logger.debug("Configuring manage docs view for %s", state.get("role") or "anonymous")
+    rows, overview = refresh_library()
+    hint = overview + ("\n\nAdmin-only." if not is_admin else "")
     return (
         gr.update(interactive=is_admin),
         gr.update(interactive=is_admin),
-        gr.update(interactive=is_admin),
-        gr.update(interactive=is_admin),
-        dropdown_update,
-        gr.update(value=overview + ("\n\nAdmin-only." if not is_admin else "")),
+        gr.update(value=rows),
+        hint,
         tooltip,
     )
+
+
+def open_manage_docs(state: AppState) -> tuple:
+    """Navigate to the Manage Docs view with refreshed data and gating."""
+
+    updated_state = _set_page(state, "manage_docs")
+    is_admin = state.get("role") == "admin"
+    rows, overview = refresh_library()
+    logger.info("Opening Manage Docs for %s", state.get("user") or "unknown user")
+    return (
+        updated_state,
+        gr.update(visible=False),
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(visible=False),
+        gr.update(visible=True),
+        gr.update(value=rows),
+        overview,
+        "Browse and manage ingested documents.",
+        gr.update(interactive=is_admin),
+        gr.update(interactive=is_admin),
+        "Full access" if is_admin else "Read-only for non-admins.",
+    )
+
+
+def return_to_search(state: AppState) -> tuple:
+    """Navigate back to the primary search view while staying logged in."""
+
+    return toggle_page("search", state)
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +838,12 @@ body {background: #0d0f12; color: #e8ebf1;}
 .sidebar {min-width: 280px; max-width: 320px; padding: 12px; gap: 10px;}
 .hero-input input, .hero-input textarea {border-radius: 14px; border: 1px solid #232834; background: #0f1117; color: #e8ebf1; font-size: 18px; padding: 16px 18px;}
 button.primary {background: linear-gradient(135deg, #4b82f7, #8a6bff); color: #fff; border-radius: 12px; border: none;}
-button.ghost {background: transparent; border: 1px solid #2c3342; color: #e8ebf1; border-radius: 10px;}
+button, .btn {color: #f5f7ff !important; font-weight: 600;}
+button.ghost {background: #1d2330; border: 1px solid #4a5770; color: #f5f7ff; border-radius: 10px;}
+button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
+.gr-button-primary:hover, button.primary:hover {filter: brightness(1.05);}
+.session-table table {width: 100%;}
+.session-table td:last-child, .docs-table td:last-child {text-align: center; width: 56px;}
 .status {color: #9ea8c2; font-size: 13px;}
 .chatbot {background: #0f1117; border: 1px solid #1f232b; border-radius: 16px;}
 .card {padding: 14px; background: #0f1117; border: 1px solid #1f232b; border-radius: 12px;}
@@ -688,21 +889,19 @@ def build_app() -> gr.Blocks:
                     user_badge = _safe_markdown("", elem_classes=["status"])
                     role_badge = _safe_markdown("", elem_classes=["status"])
                 new_session_btn = gr.Button("New Search / Session", elem_classes=["primary"], variant="primary")
-                session_radio = gr.Radio(label="Recent Sessions", choices=[], interactive=True)
+                session_table = gr.Dataframe(
+                    label="Recent Sessions",
+                    headers=["Session", ""],
+                    datatype=["str", "str"],
+                    row_count=(0, "dynamic"),
+                    col_count=2,
+                    interactive=True,
+                    wrap=True,
+                    elem_classes=["session-table"],
+                )
+                session_radio = gr.Radio(label="Recent Sessions", choices=[], interactive=True, visible=False)
                 session_meta = _safe_markdown("Select a session to begin.", elem_classes=["status"])
-                with gr.Row():
-                    view_btn = gr.Button("View", elem_classes=["ghost"], variant="secondary")
-                    delete_session_btn = gr.Button("Delete", elem_classes=["ghost"], variant="secondary")
-
-                with gr.Accordion("Document Tools", open=False):
-                    doc_upload = gr.File(label="Upload PDFs", file_count="multiple", file_types=[".pdf"], interactive=False)
-                    ingest_btn = gr.Button("Ingest", elem_classes=["primary"], variant="primary", interactive=False)
-                    doc_list = gr.Dropdown(label="Documents", choices=[], interactive=False)
-                    metadata = gr.Textbox(label="Metadata / Notes", placeholder="Admin can edit", interactive=False)
-                    doc_delete = gr.Button("Delete Document", variant="secondary", interactive=False)
-                    doc_overview = _safe_markdown("", elem_classes=["status"])
-                    admin_hint = _safe_markdown("Admin-only.", elem_classes=["status"])
-
+                manage_docs_btn = gr.Button("Manage Docs", elem_classes=["ghost"], variant="secondary")
                 help_btn = gr.Button("Help & FAQ", elem_classes=["ghost"], variant="secondary")
 
             # Main content
@@ -719,7 +918,38 @@ def build_app() -> gr.Blocks:
                     chatbot = gr.Chatbot(height=520, bubble_full_width=False, elem_classes=["chatbot"])
                     with gr.Row():
                         clear_btn = gr.Button("Clear", elem_classes=["ghost"], variant="secondary")
-                        back_to_help_btn = gr.Button("Open Help", elem_classes=["ghost"], variant="secondary")
+
+                with gr.Column(visible=False, elem_id="manage-docs-view") as manage_docs_view:
+                    _safe_markdown("### Manage Docs", elem_classes=["title"])
+                    with gr.Row():
+                        back_to_search_from_docs = gr.Button(
+                            "Back to Search", elem_classes=["ghost"], variant="secondary"
+                        )
+                        docs_logout = gr.Button("Logout", elem_classes=["ghost"], variant="secondary")
+                    doc_status = _safe_markdown("Browse and manage ingested documents.", elem_classes=["status"])
+                    doc_search = gr.Textbox(
+                        label="Search documents",
+                        placeholder="Type to filter documents…",
+                    )
+                    doc_table = gr.Dataframe(
+                        headers=["Document", "Type", "Size", "Ingested", ""],
+                        datatype=["str", "str", "str", "str", "str"],
+                        row_count=(0, "dynamic"),
+                        col_count=5,
+                        interactive=True,
+                        wrap=True,
+                        elem_classes=["docs-table"],
+                    )
+                    with gr.Row():
+                        doc_upload = gr.File(
+                            label="Upload PDFs",
+                            file_count="multiple",
+                            file_types=[".pdf"],
+                            interactive=False,
+                        )
+                        ingest_btn = gr.Button("Ingest", elem_classes=["primary"], variant="primary", interactive=False)
+                    doc_overview = _safe_markdown("", elem_classes=["status"])
+                    admin_hint = _safe_markdown("", elem_classes=["status"])
 
                 with gr.Column(visible=False, elem_id="help-view", elem_classes=["help-page"]) as help_view:
                     _safe_markdown("## Help & Onboarding")
@@ -738,11 +968,12 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 **Sessions**
 - "New Search / Session" starts a clean conversation.
 - Select any recent session to view its history.
-- "Delete" removes the highlighted session.
+- Click the ✖ in the session list to delete it after confirming.
 
-**Document tools**
-- Administrators can upload, ingest, edit metadata, and delete documents feeding the RAG index.
-- Standard users can browse documents but cannot modify them (controls disabled with an Admin-only tooltip).
+**Manage Docs**
+- Use the Manage Docs view to ingest PDFs and review the knowledge base.
+- Administrators can upload, ingest, and delete documents feeding the RAG index.
+- Standard users can browse documents but cannot modify them.
 
 **FAQ & Troubleshooting**
 - If authentication fails, verify credentials and try again.
@@ -765,15 +996,24 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 login_view,
                 workspace,
                 help_view,
+                search_view,
+                manage_docs_view,
                 user_badge,
                 role_badge,
                 session_radio,
+                session_table,
                 session_state,
                 chatbot,
                 session_meta,
                 response_timer,
                 user_state,
                 role_state,
+                doc_table,
+                doc_overview,
+                doc_status,
+                doc_upload,
+                ingest_btn,
+                admin_hint,
             ],
         )
         password.submit(
@@ -785,15 +1025,24 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 login_view,
                 workspace,
                 help_view,
+                search_view,
+                manage_docs_view,
                 user_badge,
                 role_badge,
                 session_radio,
+                session_table,
                 session_state,
                 chatbot,
                 session_meta,
                 response_timer,
                 user_state,
                 role_state,
+                doc_table,
+                doc_overview,
+                doc_status,
+                doc_upload,
+                ingest_btn,
+                admin_hint,
             ],
         )
 
@@ -814,51 +1063,66 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
         new_session_btn.click(
             start_new_session,
             inputs=app_state,
-            outputs=[session_radio, session_state, chatbot, session_meta, response_timer],
+            outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
         )
-        view_btn.click(
-            select_session,
-            inputs=[session_radio, app_state],
-            outputs=[session_radio, session_state, chatbot, session_meta, response_timer],
-        )
-        delete_session_btn.click(
-            remove_session,
-            inputs=[session_radio, app_state],
-            outputs=[session_radio, session_state, chatbot, session_meta, response_timer],
+        session_table.select(
+            handle_session_table_selection,
+            inputs=[app_state],
+            outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
+            _js="(value, evt) => {return evt?.column === 1 ? (confirm('Delete this session?') ? [value, evt] : false) : [value, evt];}",
         )
 
         # Document tools
         ingest_btn.click(
             ingest_and_refresh,
             inputs=doc_upload,
-            outputs=[doc_list, doc_overview],
+            outputs=[doc_table, doc_overview],
         )
-        doc_delete.click(
-            delete_and_refresh,
-            inputs=doc_list,
-            outputs=[doc_list, doc_overview],
+        doc_search.change(
+            filter_documents,
+            inputs=doc_search,
+            outputs=[doc_table, doc_overview],
         )
-        doc_list.change(
-            lambda doc: doc or "Select a document to preview.",
-            inputs=doc_list,
-            outputs=metadata,
+        doc_table.select(
+            handle_document_action,
+            inputs=[doc_search, app_state],
+            outputs=[doc_table, doc_overview],
+            _js="(value, evt) => {return evt?.column === 4 ? (confirm('Delete this document?') ? [value, evt] : false) : [value, evt];}",
         )
 
         # Help navigation
         help_btn.click(
             lambda state: toggle_page("help", state),
             inputs=app_state,
-            outputs=[app_state, login_view, workspace, help_view, search_view],
+            outputs=[app_state, login_view, workspace, help_view, search_view, manage_docs_view],
         )
         back_to_search.click(
             lambda state: toggle_page("search", state),
             inputs=app_state,
-            outputs=[app_state, login_view, workspace, help_view, search_view],
+            outputs=[app_state, login_view, workspace, help_view, search_view, manage_docs_view],
         )
-        back_to_help_btn.click(
-            lambda state: toggle_page("help", state),
+        manage_docs_btn.click(
+            open_manage_docs,
             inputs=app_state,
-            outputs=[app_state, login_view, workspace, help_view, search_view],
+            outputs=[
+                app_state,
+                login_view,
+                workspace,
+                help_view,
+                search_view,
+                manage_docs_view,
+                doc_table,
+                doc_overview,
+                doc_status,
+                doc_upload,
+                ingest_btn,
+                admin_hint,
+            ],
+        )
+        back_to_search_from_docs.click(
+            return_to_search,
+            inputs=app_state,
+            outputs=[app_state, login_view, workspace, help_view, search_view, manage_docs_view],
         )
 
         # Logout
@@ -870,15 +1134,52 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 login_view,
                 workspace,
                 login_error,
+                search_view,
+                manage_docs_view,
                 user_badge,
                 role_badge,
                 session_radio,
+                session_table,
                 session_state,
                 chatbot,
                 session_meta,
                 response_timer,
                 user_state,
                 role_state,
+                doc_table,
+                doc_overview,
+                doc_status,
+                doc_upload,
+                ingest_btn,
+                admin_hint,
+            ],
+        )
+        docs_logout.click(
+            logout,
+            inputs=app_state,
+            outputs=[
+                app_state,
+                login_view,
+                workspace,
+                login_error,
+                search_view,
+                manage_docs_view,
+                user_badge,
+                role_badge,
+                session_radio,
+                session_table,
+                session_state,
+                chatbot,
+                session_meta,
+                response_timer,
+                user_state,
+                role_state,
+                doc_table,
+                doc_overview,
+                doc_status,
+                doc_upload,
+                ingest_btn,
+                admin_hint,
             ],
         )
 
@@ -886,7 +1187,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
         app_state.change(
             configure_doc_tools,
             inputs=app_state,
-            outputs=[ingest_btn, doc_upload, doc_delete, metadata, doc_list, doc_overview, admin_hint],
+            outputs=[doc_upload, ingest_btn, doc_table, doc_overview, admin_hint],
         )
 
     return demo
