@@ -768,6 +768,22 @@ def _initial_state() -> AppState:
     return {"page": "login", "role": "", "user": "", "session_id": ""}
 
 
+def announce_login_attempt() -> tuple[gr.Update, gr.Update]:
+    """Surface an immediate status update while authentication runs.
+
+    Gradio executes chained callbacks sequentially; the first callback
+    returns quickly to update the UI so users see progress feedback while
+    the second callback performs real authentication. This improves clarity
+    when the server performs slower checks or model warmup.
+    """
+
+    logger.info("Login submission received; rendering in-progress indicator")
+    return (
+        gr.update(value="Authenticating…", visible=True),
+        gr.update(value="", visible=False),
+    )
+
+
 def attempt_login(username: str, password: str, state: AppState) -> tuple:
     """Authenticate and transition to the search page when successful."""
 
@@ -776,6 +792,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         logger.warning("Login failed; keeping user on login page")
         return (
             state,
+            gr.update(value="Authentication failed.", visible=True),
             gr.update(value="Invalid credentials. Please try again.", visible=True),
             gr.update(visible=True),
             gr.update(visible=False),
@@ -818,6 +835,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
     logger.info("Login succeeded for %s; transitioning to search page", safe_username)
     return (
         new_state,
+        gr.update(value="Authenticated. Redirecting…", visible=True),
         gr.update(value="", visible=False),
         gr.update(visible=False),
         gr.update(visible=True),
@@ -839,8 +857,6 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         None,
         gr.update(value=safe_username),
         gr.update(value=role),
-        safe_username,
-        role,
         gr.update(value=doc_rows),
         doc_overview,
         "Browse and manage ingested documents.",
@@ -858,6 +874,7 @@ def logout(state: AppState) -> tuple:
     cleared_state = _initial_state()
     return (
         cleared_state,
+        gr.update(value="Ready to sign in.", visible=False),
         gr.update(visible=True),
         gr.update(visible=False),
         gr.update(value="", visible=False),
@@ -1145,6 +1162,9 @@ def build_app() -> gr.Blocks:
             )
             userid = gr.Textbox(label="User ID", placeholder="Enter your username", autofocus=True)
             password = gr.Textbox(label="Password", placeholder="Enter your password", type="password")
+            login_status = _safe_markdown(
+                "Ready to sign in.", visible=False, elem_classes=["status"], value="Ready to sign in."
+            )
             login_error = _safe_markdown(visible=False, elem_classes=["status"], value="")
 
         # ---------------------- Workspace -------------------------
@@ -1291,10 +1311,15 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 
         # Login submits (Enter key)
         userid.submit(
+            announce_login_attempt,
+            inputs=[],
+            outputs=[login_status, login_error],
+        ).then(
             attempt_login,
             inputs=[userid, password, app_state],
             outputs=[
                 app_state,
+                login_status,
                 login_error,
                 login_view,
                 workspace,
@@ -1326,10 +1351,15 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             ],
         )
         password.submit(
+            announce_login_attempt,
+            inputs=[],
+            outputs=[login_status, login_error],
+        ).then(
             attempt_login,
             inputs=[userid, password, app_state],
             outputs=[
                 app_state,
+                login_status,
                 login_error,
                 login_view,
                 workspace,
@@ -1524,6 +1554,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             inputs=app_state,
             outputs=[
                 app_state,
+                login_status,
                 login_view,
                 workspace,
                 login_error,
@@ -1558,6 +1589,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             inputs=app_state,
             outputs=[
                 app_state,
+                login_status,
                 login_view,
                 workspace,
                 login_error,
