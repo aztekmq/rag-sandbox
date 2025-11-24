@@ -17,9 +17,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Tuple, TypedDict
+from typing import Any, Dict, Tuple, TypedDict
 
 import gradio as gr
+import gradio_client.utils as client_utils
 
 from app.auth import authenticate
 from app.config import PDF_DIR, SHARE_INTERFACE
@@ -40,6 +41,43 @@ logger = logging.getLogger(__name__)
 # that logs the failure and returns an empty schema instead of bubbling the
 # exception up through the request stack.
 _ORIGINAL_GET_API_INFO = gr.Blocks.get_api_info
+_ORIGINAL_JSON_SCHEMA_TO_PYTHON_TYPE = client_utils.json_schema_to_python_type
+
+
+def _coerce_json_schema(schema: Any) -> Any:
+    """Coerce JSON schema fragments into dictionaries to avoid TypeError crashes."""
+
+    if isinstance(schema, bool):
+        logger.debug("Coercing boolean JSON schema value %s to an empty object", schema)
+        return {} if schema else {"not": {}}
+
+    if isinstance(schema, dict):
+        return {key: _coerce_json_schema(value) for key, value in schema.items()}
+
+    if isinstance(schema, list):
+        return [_coerce_json_schema(value) for value in schema]
+
+    return schema
+
+
+def _safe_json_schema_to_python_type(schema: Any, defs: dict | None = None) -> Any:
+    """Wrap Gradio's schema converter to tolerate non-dict inputs produced upstream."""
+
+    sanitized_schema = _coerce_json_schema(schema)
+    sanitized_defs = _coerce_json_schema(defs or {}) if defs is not None else None
+
+    try:
+        return _ORIGINAL_JSON_SCHEMA_TO_PYTHON_TYPE(sanitized_schema, sanitized_defs)
+    except TypeError as exc:  # pragma: no cover - defensive path for future regressions
+        logger.exception(
+            "Fallback activated while converting JSON schema to python type; returning 'unknown'",
+            exc_info=exc,
+        )
+        return "unknown"
+
+
+if client_utils.json_schema_to_python_type is not _safe_json_schema_to_python_type:
+    client_utils.json_schema_to_python_type = _safe_json_schema_to_python_type
 
 
 def _safe_get_api_info(self, *args, **kwargs):
