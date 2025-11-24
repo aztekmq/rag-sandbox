@@ -542,9 +542,6 @@ def respond(
     working_history: list[tuple[str, str]] = list(existing_history)
     working_history.append((sanitized, ""))
     _persist_history(record.session_id, active_role, active_user, working_history)
-    meta = _format_session_meta(record)
-    yield "", working_history, "Thinking…", record.session_id, meta
-
     answer = query_rag(sanitized)
     elapsed = time.perf_counter() - start_time
     working_history[-1] = (sanitized, answer)
@@ -552,6 +549,42 @@ def respond(
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
     logger.info("Response for session %s completed in %.3f seconds", record.session_id, elapsed)
     return "", working_history, f"Response time: {elapsed:.2f}s", record.session_id, meta
+
+
+def begin_response_cycle(prompt: str, start_time: float | None) -> tuple:
+    """Immediately display loading indicators and disable submission controls."""
+
+    sanitized = (prompt or "").strip()
+    new_start = time.perf_counter()
+    thinking_text = "Thinking… typical response 5–20 seconds depending on corpus size."
+    logger.info(
+        "Starting response cycle at %.6f with prompt length=%d", new_start, len(sanitized)
+    )
+    return (
+        new_start,
+        gr.update(value=thinking_text, visible=True),
+        gr.update(visible=True),
+        gr.update(interactive=False),
+        gr.update(value=thinking_text, visible=True),
+    )
+
+
+def finalize_response_cycle(current_timer: str, start_time: float | None) -> tuple:
+    """Hide loading indicators, re-enable submission, and report elapsed time."""
+
+    elapsed = (time.perf_counter() - start_time) if start_time else None
+    done_text = (
+        f"Answered in {elapsed:.2f}s" if elapsed is not None else (current_timer or "Answered.")
+    )
+    logger.info(
+        "Finalizing response cycle; elapsed=%.3f, previous_timer=%s", elapsed or -1.0, current_timer
+    )
+    return (
+        gr.update(value=done_text, visible=False),
+        gr.update(visible=False),
+        gr.update(interactive=True),
+        gr.update(value=done_text, visible=True),
+    )
 
 
 def clear_query_input(current_value: str) -> str:
@@ -781,6 +814,7 @@ def build_app() -> gr.Blocks:
         role_state = gr.State("")
         session_state = gr.State("")
         selected_doc_state = gr.State("")
+        start_time_state = gr.State(None)
 
         # ---------------------- Login Screen ----------------------
         with gr.Column(visible=True, elem_classes=["panel"], elem_id="login-view") as login_view:
@@ -830,7 +864,16 @@ def build_app() -> gr.Blocks:
                             variant="primary",
                             scale=1,
                         )
-                    response_timer = _safe_markdown("Response time: --", elem_classes=["status"])
+                    with gr.Row():
+                        response_timer = _safe_markdown("Response time: --", elem_classes=["status"])
+                        loading_gif = gr.Image(
+                            value=str(Path("app/assets/loading_spinner.gif")),
+                            visible=False,
+                            show_label=False,
+                            container=False,
+                            height=64,
+                        )
+                        thinking_md = _safe_markdown("", visible=False, elem_classes=["status"])
                     chatbot = gr.Chatbot(height=520, bubble_full_width=False, elem_classes=["chatbot"])
                     with gr.Row():
                         clear_btn = gr.Button("Clear", elem_classes=["ghost"], variant="secondary")
@@ -965,14 +1008,30 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 
         # Search interactions
         hero_query.submit(
+            begin_response_cycle,
+            inputs=[hero_query, start_time_state],
+            outputs=[start_time_state, thinking_md, loading_gif, hero_submit_btn, response_timer],
+        ).then(
             respond,
             inputs=[hero_query, chatbot, app_state, session_state, user_state],
             outputs=[hero_query, chatbot, response_timer, session_state, session_meta],
+        ).then(
+            finalize_response_cycle,
+            inputs=[response_timer, start_time_state],
+            outputs=[thinking_md, loading_gif, hero_submit_btn, response_timer],
         )
         hero_submit_btn.click(
+            begin_response_cycle,
+            inputs=[hero_query, start_time_state],
+            outputs=[start_time_state, thinking_md, loading_gif, hero_submit_btn, response_timer],
+        ).then(
             respond,
             inputs=[hero_query, chatbot, app_state, session_state, user_state],
             outputs=[hero_query, chatbot, response_timer, session_state, session_meta],
+        ).then(
+            finalize_response_cycle,
+            inputs=[response_timer, start_time_state],
+            outputs=[thinking_md, loading_gif, hero_submit_btn, response_timer],
         )
         hero_clear_btn.click(
             clear_query_input,
