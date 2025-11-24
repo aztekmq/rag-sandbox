@@ -1257,20 +1257,26 @@ def build_app() -> gr.Blocks:
                             visible=False,
                             elem_id="loading-spinner",
                         )
-                        stage_md = _safe_markdown(
-                            "Ready to search.", elem_classes=["status"], elem_id="stage-indicator"
-                        )
-                        elapsed_md = _safe_markdown(
-                            "Elapsed: 00:00.0",
-                            visible=False,
-                            elem_classes=["status"],
-                            elem_id="elapsed-indicator",
-                        )
-                        eta_md = _safe_markdown(
-                            "ETA: calculating…",
-                            visible=False,
-                            elem_classes=["status"],
-                            elem_id="eta-indicator",
+                        with gr.Row(elem_classes=["status-labels"], elem_id="status-labels-wrapper"):
+                            stage_md = _safe_markdown(
+                                "Ready to search.",
+                                elem_classes=["status", "status-label"],
+                                elem_id="stage-indicator",
+                            )
+                            elapsed_md = _safe_markdown(
+                                "Elapsed: 00:00.0",
+                                visible=False,
+                                elem_classes=["status", "status-label"],
+                                elem_id="elapsed-indicator",
+                            )
+                            eta_md = _safe_markdown(
+                                "ETA: calculating…",
+                                visible=False,
+                                elem_classes=["status", "status-label"],
+                                elem_id="eta-indicator",
+                            )
+                        logger.debug(
+                            "Status indicators configured with flex alignment for stage, elapsed, and ETA labels"
                         )
                     with gr.Row(elem_classes=["status-row"]):
                         response_timer = _safe_markdown(

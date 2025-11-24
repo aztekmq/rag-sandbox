@@ -133,6 +133,30 @@ body {
   margin-top: 2px;
 }
 
+/* Flex container for status labels to keep telemetry aligned horizontally. */
+.status-labels {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+.status-labels .status,
+.status-labels .status p {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  width: 100%;
+}
+
+.status-labels .status-label {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: left;
+}
+
 .timer-bar {
   text-align: right;
   margin-top: 4px;
