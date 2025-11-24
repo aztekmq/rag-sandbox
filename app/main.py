@@ -1163,7 +1163,7 @@ def build_app() -> gr.Blocks:
             userid = gr.Textbox(label="User ID", placeholder="Enter your username", autofocus=True)
             password = gr.Textbox(label="Password", placeholder="Enter your password", type="password")
             login_status = _safe_markdown(
-                "Ready to sign in.", visible=False, elem_classes=["status"], value="Ready to sign in."
+                "Ready to sign in.", visible=False, elem_classes=["status"]
             )
             login_error = _safe_markdown(visible=False, elem_classes=["status"], value="")
 
