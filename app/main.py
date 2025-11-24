@@ -187,15 +187,6 @@ def _ensure_default_session(role: str, username: str) -> SessionRecord:
     return record
 
 
-def _session_rows(role: str, username: str) -> list[list[str]]:
-    """Return tabular rows for rendering sessions in the selector."""
-
-    choices = _list_session_choices(role, username)
-    rows = [[label] for label, _ in choices]
-    logger.debug("Prepared %d session rows for display", len(rows))
-    return rows
-
-
 def _format_session_meta(record: SessionRecord) -> str:
     """Render a compact summary for the active session without rigid labels."""
 
@@ -241,15 +232,6 @@ def _safe_markdown(value: str = "", **kwargs) -> gr.Markdown:
         )
 
     return gr.Markdown(value, **kwargs)
-
-
-def _list_session_choices(role: str, username: str) -> list[tuple[str, str]]:
-    """Return display choices for all sessions scoped to the provided user."""
-
-    bucket = _get_session_bucket(role, username)
-    choices = sorted(bucket.values(), key=lambda rec: rec.updated_at, reverse=True)
-    logger.debug("Listing %d session choices for %s", len(choices), _session_key(role, username))
-    return [record.as_choice() for record in choices]
 
 
 def _persist_history(session_id: str, role: str, username: str, history: list[tuple[str, str]]):
@@ -517,57 +499,8 @@ def hydrate_sessions(role: str, username: str) -> tuple:
 
     record = _ensure_default_session(role, username)
     logger.info("Hydrating sessions for %s", _session_key(role, username))
-    choices = _list_session_choices(role, username)
     meta = _format_session_meta(record)
-    return (
-        gr.update(choices=choices, value=record.session_id),
-        gr.update(value=_session_rows(role, username)),
-        record.session_id,
-        record.history,
-        meta,
-        "Response time: --",
-    )
-
-
-def start_new_session(state: AppState) -> tuple:
-    """Create a brand-new session, returning updates for the selection UI."""
-
-    role = state.get("role") or "user"
-    username = state.get("user") or role
-    bucket = _get_session_bucket(role, username)
-    session_id = str(uuid.uuid4())
-    record = SessionRecord(session_id=session_id, title=_format_session_title(bucket))
-    bucket[session_id] = record
-    logger.info("Started new session %s for %s", session_id, _session_key(role, username))
-    choices = _list_session_choices(role, username)
-    meta = _format_session_meta(record)
-    return (
-        gr.update(choices=choices, value=session_id),
-        gr.update(value=_session_rows(role, username)),
-        session_id,
-        [],
-        meta,
-        "Response time: --",
-    )
-
-
-def select_session(session_id: str, state: AppState) -> tuple:
-    """Switch the active session and surface its history in the chat UI."""
-
-    role = state.get("role") or "user"
-    username = state.get("user") or role
-    record = _load_session(role, username, session_id)
-    logger.info("Switching to session %s for %s", record.session_id, _session_key(role, username))
-    choices = _list_session_choices(role, username)
-    meta = _format_session_meta(record)
-    return (
-        gr.update(choices=choices, value=record.session_id),
-        gr.update(value=_session_rows(role, username)),
-        record.session_id,
-        record.history,
-        meta,
-        "Response time: --",
-    )
+    return record.session_id, record.history, meta, "Response time: --"
 
 
 def clear_session_history(session_id: str, state: AppState) -> tuple:
@@ -581,43 +514,6 @@ def clear_session_history(session_id: str, state: AppState) -> tuple:
     refreshed = _load_session(role, username, record.session_id)
     meta = _format_session_meta(refreshed)
     return [], "Response time: --", refreshed.session_id, meta
-
-
-def handle_session_table_selection(
-    selected: list[str] | str,
-    event: gr.SelectData | None = None,
-    state: AppState | None = None,
-) -> tuple:
-    """Route session table selections to view actions while tracking delete intent."""
-
-    if state is None:
-        logger.warning("Session table selection invoked without state; using empty defaults for safety")
-        state = {}
-    
-    role = state.get("role") or "user"
-    username = state.get("user") or role
-    row_index, col_index = 0, 0
-    if event is not None:
-        try:
-            row_index, col_index = event.index  # type: ignore[assignment]
-        except Exception:  # noqa: BLE001 - fallback for unexpected event payloads
-            row_index = getattr(event, "row", 0) or 0
-            col_index = getattr(event, "column", 0) or 0
-
-    choices = _list_session_choices(role, username)
-    if not choices:
-        logger.warning("Session selection received without available sessions; rebuilding defaults")
-        return hydrate_sessions(role, username)
-
-    target_index = max(0, min(row_index, len(choices) - 1))
-    target_session = choices[target_index][1]
-    logger.info(
-        "Session table click on row %d column %d for session %s",
-        row_index,
-        col_index,
-        target_session,
-    )
-    return select_session(target_session, state)
 
 
 def respond(
@@ -701,11 +597,9 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
             gr.update(visible=False),
             gr.update(value=""),
             gr.update(value=""),
-            gr.update(choices=[], value=None),
-            gr.update(value=[]),
             "",
             [],
-            "Select a session to begin.",
+            "Session inactive. Log in to begin.",
             "Response time: --",
             "",
             "",
@@ -742,8 +636,6 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         sessions[1],
         sessions[2],
         sessions[3],
-        sessions[4],
-        sessions[5],
         safe_username,
         role,
         gr.update(value=doc_rows),
@@ -770,11 +662,9 @@ def logout(state: AppState) -> tuple:
         gr.update(visible=False),
         gr.update(value=""),
         gr.update(value=""),
-        gr.update(choices=[], value=None),
-        gr.update(value=[]),
         "",
         [],
-        "Select a session to begin.",
+        "Session ready. Conversations persist automatically.",
         "Response time: --",
         "",
         "",
@@ -913,20 +803,7 @@ def build_app() -> gr.Blocks:
                 with gr.Row():
                     user_badge = _safe_markdown("", elem_classes=["status"])
                     role_badge = _safe_markdown("", elem_classes=["status"])
-                new_session_btn = gr.Button("New Search / Session", elem_classes=["primary"], variant="primary")
-                session_table = gr.Dataframe(
-                    label="Recent Sessions",
-                    headers=["Session"],
-                    datatype=["str"],
-                    row_count=(0, "dynamic"),
-                    col_count=1,
-                    value=[],
-                    interactive=True,
-                    wrap=True,
-                    elem_classes=["session-table"],
-                )
-                session_radio = gr.Radio(label="Recent Sessions", choices=[], interactive=True, visible=False)
-                session_meta = _safe_markdown("Select a session to begin.", elem_classes=["status"])
+                session_meta = _safe_markdown("Session ready. Conversations persist automatically.", elem_classes=["status"])
                 manage_docs_btn = gr.Button("Manage Docs", elem_classes=["ghost"], variant="secondary")
                 help_btn = gr.Button("Help & FAQ", elem_classes=["ghost"], variant="secondary")
 
@@ -1009,9 +886,8 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 - Response time and session metadata remain visible above the chat stream.
 
 **Sessions**
-- "New Search / Session" starts a clean conversation.
-- Select any recent session to view its history.
 - Sessions persist automatically so you can return to them later without manual cleanup.
+- Use the Clear controls to reset history while staying in the same conversation.
 
 **Manage Docs**
 - Use the Manage Docs view to ingest PDFs and review the knowledge base.
@@ -1043,8 +919,6 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 manage_docs_view,
                 user_badge,
                 role_badge,
-                session_radio,
-                session_table,
                 session_state,
                 chatbot,
                 session_meta,
@@ -1073,8 +947,6 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 manage_docs_view,
                 user_badge,
                 role_badge,
-                session_radio,
-                session_table,
                 session_state,
                 chatbot,
                 session_meta,
@@ -1113,18 +985,6 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             inputs=[session_state, app_state],
             outputs=[chatbot, response_timer, session_state, session_meta],
             queue=False,
-        )
-
-        # Session controls
-        new_session_btn.click(
-            start_new_session,
-            inputs=app_state,
-            outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
-        )
-        session_table.select(
-            handle_session_table_selection,
-            inputs=[app_state],
-            outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
         )
 
         # Document tools
@@ -1201,8 +1061,6 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 manage_docs_view,
                 user_badge,
                 role_badge,
-                session_radio,
-                session_table,
                 session_state,
                 chatbot,
                 session_meta,
@@ -1230,8 +1088,6 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 manage_docs_view,
                 user_badge,
                 role_badge,
-                session_radio,
-                session_table,
                 session_state,
                 chatbot,
                 session_meta,
