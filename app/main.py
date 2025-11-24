@@ -1118,23 +1118,73 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
 @keyframes spin {to {transform: rotate(360deg);}}
 .error-banner {background: rgba(128, 38, 38, 0.35); color: #f6dada; padding: 6px 10px; border-radius: 8px; border: 1px solid #a94040; font-weight: 600;}
 
+/* Chat transcript cleanup to remove phantom glyphs and excessive whitespace. */
 .chatbot {
   background: #0f1117;
   border: 1px solid #1f232b;
-  border-radius: 16px;
-  padding: 6px 8px !important;
+  border-radius: 12px;
+  padding: 4px 6px !important;
   margin-top: 4px !important;
+  box-shadow: none !important;
 }
 
 #search-view .gr-chatbot,
 #search-view .gr-chatbot > div {
-  margin-top: 4px !important;
-  padding-top: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 #search-view .gr-chatbot .wrap {
-  padding: 4px !important;
-  gap: 6px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  align-items: stretch !important;
+  min-height: 0 !important;
+  scroll-padding: 0 !important;
+}
+
+#search-view .gr-chatbot .wrap > div {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#search-view .gr-chatbot .wrap > div:empty {
+  display: none !important;
+  min-height: 0 !important;
+}
+
+#search-view .gr-chatbot .message {
+  margin: 0 !important;
+  padding: 10px 14px !important;
+  border-radius: 12px !important;
+  background: #151821 !important;
+  border: 1px solid #1f232b !important;
+  box-shadow: none !important;
+  text-align: left !important;
+}
+
+#search-view .gr-chatbot .message * {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+#search-view .gr-chatbot .message::before,
+#search-view .gr-chatbot .message::after,
+#search-view .gr-chatbot .message *::before,
+#search-view .gr-chatbot .message *::after {
+  content: none !important;
+  display: none !important;
+}
+
+#search-view .gr-chatbot .message .avatar,
+#search-view .gr-chatbot .message .icon,
+#search-view .gr-chatbot .message [data-testid*="avatar"] {
+  display: none !important;
 }
 
 .card {padding: 10px; background: #0f1117; border: 1px solid #1f232b; border-radius: 12px;}
