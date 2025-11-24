@@ -768,13 +768,18 @@ def _initial_state() -> AppState:
     return {"page": "login", "role": "", "user": "", "session_id": ""}
 
 
-def announce_login_attempt() -> tuple[gr.Update, gr.Update]:
+def announce_login_attempt() -> tuple[dict[str, Any], dict[str, Any]]:
     """Surface an immediate status update while authentication runs.
 
     Gradio executes chained callbacks sequentially; the first callback
     returns quickly to update the UI so users see progress feedback while
     the second callback performs real authentication. This improves clarity
     when the server performs slower checks or model warmup.
+
+    The return type intentionally uses dictionaries instead of
+    ``gr.Update`` to remain compatible with Gradio releases that removed the
+    ``Update`` alias, avoiding attribute errors during type resolution while
+    still conveying the update payload shape.
     """
 
     logger.info("Login submission received; rendering in-progress indicator")
