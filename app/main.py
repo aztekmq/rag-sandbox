@@ -30,6 +30,7 @@ from app.rag_chain import (
     get_documents_list,
     ingest_pdfs,
     query_rag,
+    start_background_prewarm,
     stream_query_rag,
 )
 
@@ -1681,6 +1682,8 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 
 
 app = build_app()
+logger.info("Starting background model prewarm to keep first response fast")
+start_background_prewarm()
 
 
 if __name__ == "__main__":

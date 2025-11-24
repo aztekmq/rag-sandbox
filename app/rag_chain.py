@@ -14,6 +14,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Thread
 from typing import Generator, List, Tuple
 
 import chromadb
@@ -30,6 +31,12 @@ logger = logging.getLogger(__name__)
 logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
 logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
 logger.debug("Chromadb telemetry loggers set to CRITICAL to avoid noisy stack traces")
+
+# Background prewarm thread handle so we can avoid spawning duplicates while the
+# container initializes. The daemon thread loads the embedding model and Llama
+# weights eagerly to keep the first user request responsive even after a cold
+# container start.
+_prewarm_thread: Thread | None = None
 
 
 class ModelPathError(FileNotFoundError):
@@ -409,6 +416,42 @@ def get_engine() -> RagEngine:
     if _engine is None:
         _engine = RagEngine()
     return _engine
+
+
+def start_background_prewarm() -> Thread:
+    """Spawn a daemon thread that warms embeddings and the LLM for faster first calls."""
+
+    global _prewarm_thread
+    if _prewarm_thread and _prewarm_thread.is_alive():
+        logger.debug("Prewarm thread already running; skipping duplicate start")
+        return _prewarm_thread
+
+    def _run_prewarm() -> None:
+        start = time.perf_counter()
+        logger.info(
+            "Starting background prewarm for embedding model and llama.cpp weights to reduce first-call latency"
+        )
+        try:
+            # Touch the embedder first so download/initialization happens before the
+            # first query path is exercised.
+            _ = embed_query("prewarm")
+
+            # Instantiate the engine and run a one-token generation to force the
+            # Llama backend to map weights and prime internal caches. Keeping the
+            # token count tiny avoids consuming user-visible resources.
+            engine = get_engine()
+            _ = engine.llm("Warm-up", max_tokens=1, temperature=0.0, stream=False)
+
+            elapsed = time.perf_counter() - start
+            logger.info("Background prewarm completed in %.2fs", elapsed)
+        except Exception:
+            logger.exception(
+                "Background prewarm failed; the application will lazily initialize on first request"
+            )
+
+    _prewarm_thread = Thread(target=_run_prewarm, name="rag-prewarm", daemon=True)
+    _prewarm_thread.start()
+    return _prewarm_thread
 
 
 def ingest_pdfs() -> str:
