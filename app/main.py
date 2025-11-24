@@ -431,7 +431,7 @@ def filter_documents(query: str | None) -> tuple[gr.update, str]:
 
 def handle_document_action(
     selected: list[str] | str, event: gr.SelectData | None, query: str | None, state: AppState
-) -> tuple[gr.update, str]:
+) -> tuple[gr.update, str, str]:
     """React to document table clicks for selection or deletion."""
 
     role = state.get("role") or "user"
@@ -448,7 +448,7 @@ def handle_document_action(
     rows = _build_document_rows(filter_text, docs)
     if not rows:
         logger.info("Document action invoked with no rows; returning overview only")
-        return gr.update(value=rows), _render_library_overview(docs)
+        return gr.update(value=rows), _render_library_overview(docs), ""
 
     target_index = max(0, min(row_index, len(rows) - 1))
     target_doc = rows[target_index][0]
@@ -463,13 +463,36 @@ def handle_document_action(
     if col_index == 4:
         if role != "admin":
             logger.warning("Non-admin attempted to delete document %s", target_doc)
-            return gr.update(value=rows), _render_library_overview(docs) + "\n\nAdmin-only delete."
+            return gr.update(value=rows), _render_library_overview(docs) + "\n\nAdmin-only delete.", target_doc
 
         status = handle_delete(target_doc)
         updated_rows, overview = refresh_library(status, filter_text)
-        return gr.update(value=updated_rows), overview
+        return gr.update(value=updated_rows), overview, ""
 
-    return gr.update(value=rows), _render_library_overview(docs)
+    return gr.update(value=rows), _render_library_overview(docs), target_doc
+
+
+def delete_selected_document(doc: str | None, query: str | None, state: AppState) -> tuple[gr.update, str, str]:
+    """Delete the chosen document when allowed, preserving logging fidelity."""
+
+    role = state.get("role") or "user"
+    filter_text = query or ""
+    target_doc = (doc or "").strip()
+    logger.info("Delete button invoked for document %s by role %s", target_doc or "<empty>", role)
+
+    if not target_doc:
+        logger.warning("Delete attempted without selecting a document")
+        rows, overview = refresh_library(filter_text=filter_text)
+        return gr.update(value=rows), overview + "\n\nSelect a document before deleting.", target_doc
+
+    if role != "admin":
+        logger.warning("Non-admin attempted to delete document %s", target_doc)
+        rows, overview = refresh_library(filter_text=filter_text)
+        return gr.update(value=rows), overview + "\n\nAdmin-only delete.", target_doc
+
+    status = handle_delete(target_doc)
+    updated_rows, overview = refresh_library(status, filter_text)
+    return gr.update(value=updated_rows), overview, ""
 
 
 # ---------------------------------------------------------------------------
@@ -583,7 +606,7 @@ def clear_session_history(session_id: str, state: AppState) -> tuple:
 def handle_session_table_selection(
     selected: list[str] | str, event: gr.SelectData | None, state: AppState
 ) -> tuple:
-    """Route session table selections to view or delete actions."""
+    """Route session table selections to view actions while tracking delete intent."""
 
     role = state.get("role") or "user"
     username = state.get("user") or role
@@ -602,12 +625,24 @@ def handle_session_table_selection(
 
     target_index = max(0, min(row_index, len(choices) - 1))
     target_session = choices[target_index][1]
-    logger.info("Session table click on row %d column %d for session %s", row_index, col_index, target_session)
+    logger.info(
+        "Session table click on row %d column %d for session %s; delete column=%s",
+        row_index,
+        col_index,
+        target_session,
+        col_index == 1,
+    )
 
-    if col_index == 1:
-        return remove_session(target_session, state)
-
+    # Clicking the delete column now only selects the session; deletion is handled via
+    # a dedicated button with JS confirmation to remain compatible across Gradio versions.
     return select_session(target_session, state)
+
+
+def confirm_and_remove_session(session_id: str | None, state: AppState) -> tuple:
+    """Remove the requested session after client-side confirmation."""
+
+    logger.info("Delete button invoked for session %s", session_id)
+    return remove_session(session_id, state)
 
 
 def respond(
@@ -696,6 +731,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
             "Browse and manage ingested documents.",
             gr.update(interactive=False),
             gr.update(interactive=False),
+            gr.update(interactive=False),
             "Admin-only.",
         )
 
@@ -731,6 +767,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         "Browse and manage ingested documents.",
         gr.update(interactive=role == "admin"),
         gr.update(interactive=role == "admin"),
+        gr.update(interactive=role == "admin"),
         "Full access" if role == "admin" else "Read-only for non-admins.",
     )
 
@@ -762,6 +799,7 @@ def logout(state: AppState) -> tuple:
         "Browse and manage ingested documents.",
         gr.update(interactive=False),
         gr.update(interactive=False),
+        gr.update(interactive=False),
         "Admin-only.",
     )
 
@@ -791,6 +829,7 @@ def configure_doc_tools(state: AppState) -> tuple:
     return (
         gr.update(interactive=is_admin),
         gr.update(interactive=is_admin),
+        gr.update(interactive=is_admin),
         gr.update(value=rows),
         hint,
         tooltip,
@@ -814,6 +853,7 @@ def open_manage_docs(state: AppState) -> tuple:
         gr.update(value=rows),
         overview,
         "Browse and manage ingested documents.",
+        gr.update(interactive=is_admin),
         gr.update(interactive=is_admin),
         gr.update(interactive=is_admin),
         "Full access" if is_admin else "Read-only for non-admins.",
@@ -866,6 +906,7 @@ def build_app() -> gr.Blocks:
         user_state = gr.State("")
         role_state = gr.State("")
         session_state = gr.State("")
+        selected_doc_state = gr.State("")
 
         # ---------------------- Login Screen ----------------------
         with gr.Column(visible=True, elem_classes=["panel"], elem_id="login-view") as login_view:
@@ -899,6 +940,7 @@ def build_app() -> gr.Blocks:
                     wrap=True,
                     elem_classes=["session-table"],
                 )
+                session_delete_btn = gr.Button("Delete Session", variant="stop", elem_classes=["ghost"])
                 session_radio = gr.Radio(label="Recent Sessions", choices=[], interactive=True, visible=False)
                 session_meta = _safe_markdown("Select a session to begin.", elem_classes=["status"])
                 manage_docs_btn = gr.Button("Manage Docs", elem_classes=["ghost"], variant="secondary")
@@ -940,6 +982,9 @@ def build_app() -> gr.Blocks:
                         wrap=True,
                         elem_classes=["docs-table"],
                     )
+                    delete_doc_btn = gr.Button(
+                        "Delete Document", variant="stop", elem_classes=["ghost"], interactive=False
+                    )
                     with gr.Row():
                         doc_upload = gr.File(
                             label="Upload PDFs",
@@ -968,7 +1013,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 **Sessions**
 - "New Search / Session" starts a clean conversation.
 - Select any recent session to view its history.
-- Click the ✖ in the session list to delete it after confirming.
+- Use the Delete Session button after selecting a row to remove it with confirmation.
 
 **Manage Docs**
 - Use the Manage Docs view to ingest PDFs and review the knowledge base.
@@ -1013,6 +1058,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 doc_status,
                 doc_upload,
                 ingest_btn,
+                delete_doc_btn,
                 admin_hint,
             ],
         )
@@ -1042,6 +1088,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 doc_status,
                 doc_upload,
                 ingest_btn,
+                delete_doc_btn,
                 admin_hint,
             ],
         )
@@ -1069,7 +1116,12 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             handle_session_table_selection,
             inputs=[app_state],
             outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
-            _js="(value, evt) => {return evt?.column === 1 ? (confirm('Delete this session?') ? [value, evt] : false) : [value, evt];}",
+        )
+        session_delete_btn.click(
+            confirm_and_remove_session,
+            inputs=[session_state, app_state],
+            outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
+            _js="() => confirm('Delete this session?')",
         )
 
         # Document tools
@@ -1086,8 +1138,13 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
         doc_table.select(
             handle_document_action,
             inputs=[doc_search, app_state],
-            outputs=[doc_table, doc_overview],
-            _js="(value, evt) => {return evt?.column === 4 ? (confirm('Delete this document?') ? [value, evt] : false) : [value, evt];}",
+            outputs=[doc_table, doc_overview, selected_doc_state],
+        )
+        delete_doc_btn.click(
+            delete_selected_document,
+            inputs=[selected_doc_state, doc_search, app_state],
+            outputs=[doc_table, doc_overview, selected_doc_state],
+            _js="() => confirm('Delete this document?')",
         )
 
         # Help navigation
@@ -1116,6 +1173,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 doc_status,
                 doc_upload,
                 ingest_btn,
+                delete_doc_btn,
                 admin_hint,
             ],
         )
@@ -1151,6 +1209,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 doc_status,
                 doc_upload,
                 ingest_btn,
+                delete_doc_btn,
                 admin_hint,
             ],
         )
@@ -1179,6 +1238,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 doc_status,
                 doc_upload,
                 ingest_btn,
+                delete_doc_btn,
                 admin_hint,
             ],
         )
@@ -1187,7 +1247,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
         app_state.change(
             configure_doc_tools,
             inputs=app_state,
-            outputs=[doc_upload, ingest_btn, doc_table, doc_overview, admin_hint],
+            outputs=[doc_upload, ingest_btn, delete_doc_btn, doc_table, doc_overview, admin_hint],
         )
 
     return demo
