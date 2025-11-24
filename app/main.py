@@ -658,6 +658,14 @@ def respond(
     return "", working_history, f"Response time: {elapsed:.2f}s", record.session_id, meta
 
 
+def clear_query_input(current_value: str) -> str:
+    """Reset the hero query textbox while providing verbose audit logs."""
+
+    length = len(current_value or "")
+    logger.info("Clear button activated for hero query input; previous length=%d", length)
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Page state management
 # ---------------------------------------------------------------------------
@@ -932,6 +940,19 @@ def build_app() -> gr.Blocks:
                         lines=2,
                         elem_classes=["hero-input"],
                     )
+                    with gr.Row(elem_classes=["hero-actions"]):
+                        hero_clear_btn = gr.Button(
+                            "Clear",
+                            elem_classes=["ghost"],
+                            variant="secondary",
+                            scale=1,
+                        )
+                        hero_submit_btn = gr.Button(
+                            "Submit",
+                            elem_classes=["primary"],
+                            variant="primary",
+                            scale=1,
+                        )
                     response_timer = _safe_markdown("Response time: --", elem_classes=["status"])
                     chatbot = gr.Chatbot(height=520, bubble_full_width=False, elem_classes=["chatbot"])
                     with gr.Row():
@@ -1075,6 +1096,17 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             respond,
             inputs=[hero_query, chatbot, app_state, session_state, user_state],
             outputs=[hero_query, chatbot, response_timer, session_state, session_meta],
+        )
+        hero_submit_btn.click(
+            respond,
+            inputs=[hero_query, chatbot, app_state, session_state, user_state],
+            outputs=[hero_query, chatbot, response_timer, session_state, session_meta],
+        )
+        hero_clear_btn.click(
+            clear_query_input,
+            inputs=hero_query,
+            outputs=hero_query,
+            queue=False,
         )
         clear_btn.click(
             clear_session_history,
