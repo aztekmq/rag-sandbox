@@ -198,6 +198,26 @@ rag-sandbox/
 └── README.md
 ```
 
+## Why the first answer was slow (and how it's mitigated now)
+
+Both the embedding model and the llama.cpp GGUF weights are memory-mapped on
+first use. On a fresh container boot this one-time load can take several
+minutes; subsequent questions are faster because the models stay resident in
+memory. To avoid making your first user query wait for this warm-up, the
+application now starts a background prewarm thread during startup. The thread
+does three things with verbose logging so you can audit progress:
+
+1. Loads the embedding model (and downloads it if `ALLOW_HF_INTERNET=true`).
+2. Instantiates the llama.cpp engine with your configured `MODEL_PATH`.
+3. Runs a single-token generation to prime caches without consuming noticeable
+   resources.
+
+Keep the container running to retain this warm state. Model assets, Chroma
+indexes, and logs continue to persist on disk between runs via the mounted
+`data/` and `models/` volumes; if you restart the container, the background
+prewarm automatically runs again so first-question latency steadily improves
+once the thread completes.
+
 ## Operations
 - **Upload PDFs (Admin)**: Add IBM MQ PDFs via the left panel, then click **Re-index all PDFs**. Files are stored in `/app/data/pdfs`.
 - **Delete documents (Admin)**: Select a document from the dropdown and click **Delete selected** to remove its chunks from Chroma.
