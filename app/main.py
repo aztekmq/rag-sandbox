@@ -1121,7 +1121,10 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             confirm_and_remove_session,
             inputs=[session_state, app_state],
             outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
-            _js="() => confirm('Delete this session?')",
+            # Using the public ``js`` keyword keeps compatibility with newer Gradio APIs
+            # that reject the deprecated ``_js`` argument while still providing a
+            # client-side confirmation step for destructive actions.
+            js="() => confirm('Delete this session?')",
         )
 
         # Document tools
@@ -1144,7 +1147,9 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             delete_selected_document,
             inputs=[selected_doc_state, doc_search, app_state],
             outputs=[doc_table, doc_overview, selected_doc_state],
-            _js="() => confirm('Delete this document?')",
+            # Align with current Gradio event signatures to preserve confirmation
+            # prompts without triggering keyword errors during interface setup.
+            js="() => confirm('Delete this document?')",
         )
 
         # Help navigation
