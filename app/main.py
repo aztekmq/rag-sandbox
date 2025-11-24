@@ -24,7 +24,14 @@ import gradio_client.utils as client_utils
 
 from app.auth import authenticate
 from app.config import PDF_DIR, SHARE_INTERFACE
-from app.rag_chain import delete_document, get_documents_list, ingest_pdfs, query_rag
+from app.rag_chain import (
+    GenerationProgress,
+    delete_document,
+    get_documents_list,
+    ingest_pdfs,
+    query_rag,
+    stream_query_rag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -516,6 +523,49 @@ def clear_session_history(session_id: str, state: AppState) -> tuple:
     return [], "Response time: --", refreshed.session_id, meta
 
 
+def _format_eta_status(progress: GenerationProgress) -> str:
+    """Human-friendly status messaging for live ETA telemetry."""
+
+    if progress.stage == "error":
+        return progress.detail or "The RAG engine is unavailable."
+
+    if progress.stage == "retrieval":
+        retrieval_text = (
+            f"Retrieval: {progress.retrieval_seconds:.2f}s" if progress.retrieval_seconds else "Retrieval pending"
+        )
+        prefill_hint = (
+            f" · Prefill ETA ~{progress.prefill_seconds:.1f}s" if progress.prefill_seconds else ""
+        )
+        return retrieval_text + prefill_hint
+
+    if progress.stage == "prefill_complete":
+        return (
+            f"Prefill: {progress.prefill_seconds:.2f}s · Measuring token throughput for ETA."
+            if progress.prefill_seconds
+            else "Prefill completed. Measuring token throughput."
+        )
+
+    if progress.stage == "generation":
+        if progress.tokens_per_second:
+            remaining = (
+                f"≈{progress.eta_seconds:.1f}s remaining" if progress.eta_seconds is not None else "estimating remaining time"
+            )
+            return f"Generating… {progress.tokens_per_second:.2f} tok/s · {remaining}"
+        return "Generating… measuring token speed."
+
+    if progress.stage == "done":
+        retrieval = f"Retrieval: {progress.retrieval_seconds:.2f}s" if progress.retrieval_seconds else "Retrieval: --"
+        prefill = f"Prefill: {progress.prefill_seconds:.2f}s" if progress.prefill_seconds else "Prefill: --"
+        generation = (
+            f"Generation tokens: {progress.decode_tokens} @ {progress.tokens_per_second:.2f} tok/s"
+            if progress.tokens_per_second
+            else f"Generation tokens: {progress.decode_tokens}"
+        )
+        return f"{retrieval} · {prefill} · {generation}"
+
+    return progress.detail or "Working…"
+
+
 def respond(
     message: str,
     history: list[list[str]] | list[tuple[str, str]] | None,
@@ -542,13 +592,24 @@ def respond(
     working_history: list[tuple[str, str]] = list(existing_history)
     working_history.append((sanitized, ""))
     _persist_history(record.session_id, active_role, active_user, working_history)
-    answer = query_rag(sanitized)
+
+    partial_answer = ""
+    for progress in stream_query_rag(sanitized):
+        if progress.partial_answer:
+            partial_answer = progress.partial_answer
+        working_history[-1] = (sanitized, partial_answer)
+        status_text = _format_eta_status(progress)
+        _persist_history(record.session_id, active_role, active_user, working_history)
+        meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
+        logger.debug("Streaming update for session %s: %s", record.session_id, status_text)
+        yield "", working_history, status_text, record.session_id, meta
+
     elapsed = time.perf_counter() - start_time
-    working_history[-1] = (sanitized, answer)
+    working_history[-1] = (sanitized, partial_answer)
     _persist_history(record.session_id, active_role, active_user, working_history)
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
     logger.info("Response for session %s completed in %.3f seconds", record.session_id, elapsed)
-    return "", working_history, f"Response time: {elapsed:.2f}s", record.session_id, meta
+    yield "", working_history, f"Response time: {elapsed:.2f}s", record.session_id, meta
 
 
 def begin_response_cycle(prompt: str, start_time: float | None) -> tuple:
