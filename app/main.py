@@ -68,12 +68,18 @@ def _safe_json_schema_to_python_type(schema: Any, defs: dict | None = None) -> A
 
     try:
         return _ORIGINAL_JSON_SCHEMA_TO_PYTHON_TYPE(sanitized_schema, sanitized_defs)
-    except TypeError as exc:  # pragma: no cover - defensive path for future regressions
-        logger.exception(
-            "Fallback activated while converting JSON schema to python type; returning 'unknown'",
-            exc_info=exc,
+    except TypeError:
+        logger.debug(
+            "Original json_schema_to_python_type signature does not accept defs; retrying with sanitized schema only"
         )
-        return "unknown"
+        try:
+            return _ORIGINAL_JSON_SCHEMA_TO_PYTHON_TYPE(sanitized_schema)
+        except Exception as exc:  # pragma: no cover - defensive path for future regressions
+            logger.exception(
+                "Fallback activated while converting JSON schema to python type; returning 'unknown'",
+                exc_info=exc,
+            )
+            return "unknown"
 
 
 if client_utils.json_schema_to_python_type is not _safe_json_schema_to_python_type:
@@ -936,6 +942,7 @@ def build_app() -> gr.Blocks:
                     datatype=["str", "str"],
                     row_count=(0, "dynamic"),
                     col_count=2,
+                    value=[],
                     interactive=True,
                     wrap=True,
                     elem_classes=["session-table"],
@@ -978,6 +985,7 @@ def build_app() -> gr.Blocks:
                         datatype=["str", "str", "str", "str", "str"],
                         row_count=(0, "dynamic"),
                         col_count=5,
+                        value=[],
                         interactive=True,
                         wrap=True,
                         elem_classes=["docs-table"],
