@@ -978,11 +978,93 @@ def return_to_search(state: AppState) -> tuple:
 
 
 CUSTOM_CSS = """
+/* Compact, standards-aligned styling to reduce whitespace while keeping the MQ UI legible. */
 body {background: #0d0f12; color: #e8ebf1;}
-.gradio-container {font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;}
+
+.gradio-container {
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  width: min(880px, calc(100% - 8px));
+  margin: 0 auto;
+  padding: 4px !important;
+  gap: 6px !important;
+}
+
+/* Global compaction to minimize scroll and collapse empty wrappers. */
+.gradio-container .block,
+.gradio-container .gr-block,
+.gradio-container .gr-form,
+.gradio-container .gr-panel,
+.gradio-container .gr-box,
+.gradio-container .form,
+.gradio-container .wrap {
+  margin: 4px 0 !important;
+  padding: 4px !important;
+  gap: 4px !important;
+}
+
+.gradio-container .row,
+.gradio-container .gr-row,
+.gradio-container .column,
+.gradio-container .gr-column {
+  gap: 4px !important;
+  margin: 2px 0 !important;
+}
+
+.gradio-container .empty,
+.gradio-container div:empty {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
 .panel {background: #14171c; border: 1px solid #1f232b; border-radius: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.35);}
-.sidebar {min-width: 280px; max-width: 320px; padding: 12px; gap: 10px;}
-.hero-input input, .hero-input textarea {border-radius: 14px; border: 1px solid #232834; background: #0f1117; color: #e8ebf1; font-size: 18px; padding: 16px 18px;}
+.sidebar {min-width: 280px; max-width: 320px; padding: 10px; gap: 8px;}
+
+#search-view {
+  padding: 4px 6px 6px !important;
+  gap: 6px !important;
+}
+
+.hero-input input,
+.hero-input textarea {
+  border-radius: 14px;
+  border: 1px solid #232834;
+  background: #0f1117;
+  color: #e8ebf1;
+  font-size: 18px;
+  padding: 10px 12px;
+  margin: 0 !important;
+}
+
+.hero-actions {
+  align-items: center !important;
+  gap: 6px !important;
+  margin: 2px 0 0 !important;
+  padding: 0 !important;
+}
+
+.status-row {
+  align-items: center !important;
+  gap: 6px !important;
+  flex-wrap: nowrap !important;
+  padding: 2px 0 !important;
+  margin: 0 !important;
+  max-height: 40px;
+  min-height: 28px;
+}
+
+.status-row .status,
+#stage-indicator,
+#elapsed-indicator,
+#eta-indicator,
+#loading-spinner {
+  margin: 0 !important;
+  padding: 0 !important;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+
 button.primary {background: linear-gradient(135deg, #4b82f7, #8a6bff); color: #fff; border-radius: 12px; border: none;}
 button, .btn {color: #f5f7ff !important; font-weight: 600;}
 button.ghost {background: #1d2330; border: 1px solid #4a5770; color: #f5f7ff; border-radius: 10px;}
@@ -990,15 +1072,33 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
 .gr-button-primary:hover, button.primary:hover {filter: brightness(1.05);}
 .session-table table {width: 100%;}
 .session-table td:last-child, .docs-table td:last-child {text-align: center; width: 56px;}
-.status {color: #9ea8c2; font-size: 13px;}
-.status-row {align-items: center; gap: 10px; flex-wrap: wrap;}
-.status-row .status {margin: 0; padding: 0;}
+.status {color: #9ea8c2; font-size: 13px; margin: 0 !important;}
 .loading-spinner {width: 20px; height: 20px; border-radius: 50%; border: 3px solid #1f2937; border-top-color: #6fb1ff; animation: spin 0.9s linear infinite;}
 @keyframes spin {to {transform: rotate(360deg);}}
-.error-banner {background: rgba(128, 38, 38, 0.35); color: #f6dada; padding: 8px 12px; border-radius: 8px; border: 1px solid #a94040; font-weight: 600;}
-.chatbot {background: #0f1117; border: 1px solid #1f232b; border-radius: 16px;}
-.card {padding: 14px; background: #0f1117; border: 1px solid #1f232b; border-radius: 12px;}
+.error-banner {background: rgba(128, 38, 38, 0.35); color: #f6dada; padding: 6px 10px; border-radius: 8px; border: 1px solid #a94040; font-weight: 600;}
+
+.chatbot {
+  background: #0f1117;
+  border: 1px solid #1f232b;
+  border-radius: 16px;
+  padding: 6px 8px !important;
+  margin-top: 4px !important;
+}
+
+#search-view .gr-chatbot,
+#search-view .gr-chatbot > div {
+  margin-top: 4px !important;
+  padding-top: 0 !important;
+}
+
+#search-view .gr-chatbot .wrap {
+  padding: 4px !important;
+  gap: 6px !important;
+}
+
+.card {padding: 10px; background: #0f1117; border: 1px solid #1f232b; border-radius: 12px;}
 .help-page {line-height: 1.6; color: #d9deeb;}
+
 @media (max-width: 960px){.layout-row{flex-direction:column;} .sidebar{max-width:100%; width:100%;}}
 """
 
