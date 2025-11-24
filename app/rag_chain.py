@@ -1,10 +1,19 @@
-"""Core retrieval-augmented generation (RAG) pipeline."""
+"""Core retrieval-augmented generation (RAG) pipeline with live ETA telemetry.
+
+The module now instruments retrieval, prefill, and token generation phases with
+fine-grained timestamps so user interfaces can surface accurate progress
+indicators. Streaming generation yields incremental updates that include
+tokens-per-second measurements and remaining-time estimates derived from actual
+hardware throughput, providing a responsive experience even on constrained
+deployments.
+"""
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import Generator, List, Tuple
 
 import chromadb
 from chromadb.config import Settings
@@ -45,6 +54,36 @@ class ModelValidationError(ValueError):
         self.detail = detail
 
 
+@dataclass
+class GenerationProgress:
+    """Represents a streaming update during retrieval or generation.
+
+    Attributes:
+        stage: Semantic phase marker (``retrieval``, ``prefill_estimate``,
+            ``prefill_complete``, ``generation``, or ``done``).
+        detail: Human-readable status string for logging and UI surfaces.
+        retrieval_seconds: Observed retrieval duration, when available.
+        prefill_seconds: Observed or estimated prefill duration in seconds.
+        prompt_tokens: Number of tokens in the assembled prompt.
+        decode_tokens: Count of generated tokens so far.
+        tokens_per_second: Measured decode throughput.
+        eta_seconds: Estimated remaining seconds for the current stage.
+        partial_answer: Accumulated model text so far.
+        total_prompt_seconds: Historical average prompt eval, useful for telemetry.
+    """
+
+    stage: str
+    detail: str
+    retrieval_seconds: float | None = None
+    prefill_seconds: float | None = None
+    prompt_tokens: int | None = None
+    decode_tokens: int = 0
+    tokens_per_second: float | None = None
+    eta_seconds: float | None = None
+    partial_answer: str = ""
+    total_prompt_seconds: float | None = None
+
+
 class RagEngine:
     """Encapsulates vector store, embeddings, and LLM inference."""
 
@@ -81,7 +120,41 @@ class RagEngine:
             n_threads=MODEL_THREADS,
             verbose=True,
         )
+        self.prompt_eval_tps_history: list[float] = []
+        self.decode_tps_history: list[float] = []
+        self.retrieval_history: list[float] = []
         logger.info("RAG engine ready")
+
+    # ------------------------------------------------------------------
+    # Throughput estimation helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _safe_average(values: list[float], default: float) -> float:
+        """Return the average of ``values`` or a sensible fallback with logging."""
+
+        if not values:
+            logger.debug("No historical values available; using default fallback %.2f", default)
+            return default
+
+        average = sum(values) / len(values)
+        logger.debug("Computed rolling average %.3f from %d samples", average, len(values))
+        return average
+
+    def _estimate_prompt_eval_tps(self) -> float:
+        """Estimate prompt-eval throughput using history or a defensive default."""
+
+        # Conservative default keeps ETAs realistic for CPU-only environments.
+        return self._safe_average(self.prompt_eval_tps_history, default=25.0)
+
+    def _estimate_decode_tps(self) -> float:
+        """Estimate decode throughput using history or a defensive default."""
+
+        return self._safe_average(self.decode_tps_history, default=15.0)
+
+    # ------------------------------------------------------------------
+    # Retrieval and generation
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _validate_model_file(model_path: Path) -> None:
@@ -169,14 +242,27 @@ class RagEngine:
         logger.debug("Available documents: %s", docs)
         return docs
 
-    def query(self, question: str, top_k: int = 4) -> str:
+    def stream_query(self, question: str, top_k: int = 4, max_tokens: int = 512) -> Generator[GenerationProgress, None, None]:
+        """Stream retrieval and generation progress with live ETA estimates."""
+
         logger.info("Querying vector store with question: %s", question)
+        retrieval_start = time.perf_counter()
         query_embedding = embed_query(question)
         results = self.collection.query(query_embeddings=[query_embedding], n_results=top_k)
+        retrieval_elapsed = time.perf_counter() - retrieval_start
+        self.retrieval_history.append(retrieval_elapsed)
+        logger.info("Retrieval completed in %.3fs", retrieval_elapsed)
+
         contexts = results.get("documents", [[]])[0]
         if not contexts:
             logger.warning("No context retrieved; ensure PDFs are ingested")
-            return "I could not find relevant content. Please ingest PDFs in admin mode first."
+            yield GenerationProgress(
+                stage="retrieval",
+                detail="No context found during retrieval.",
+                retrieval_seconds=retrieval_elapsed,
+            )
+            return
+
         context_text = "\n".join(contexts)
         logger.debug("Retrieved %d contexts for generation", len(contexts))
 
@@ -186,15 +272,117 @@ class RagEngine:
             f"{context_text}\n\nQuestion: {question}\nAnswer:"
         )
 
-        completion = self.llm(
+        prompt_tokens = len(self.llm.tokenize(prompt.encode("utf-8")))
+        estimated_prefill = prompt_tokens / self._estimate_prompt_eval_tps()
+        logger.debug(
+            "Prompt length %d tokens; estimated prefill %.2fs using avg tps %.2f",
+            prompt_tokens,
+            estimated_prefill,
+            self._estimate_prompt_eval_tps(),
+        )
+
+        yield GenerationProgress(
+            stage="retrieval",
+            detail=f"Retrieval completed in {retrieval_elapsed:.2f}s; estimating prefill.",
+            retrieval_seconds=retrieval_elapsed,
+            prompt_tokens=prompt_tokens,
+            prefill_seconds=estimated_prefill,
+            total_prompt_seconds=estimated_prefill,
+        )
+
+        decode_generator = self.llm(
             prompt,
             temperature=0.2,
-            max_tokens=512,
+            max_tokens=max_tokens,
             stop=["User:", "Question:"],
+            stream=True,
         )
-        answer = completion["choices"][0]["text"].strip()
-        logger.info("Generated answer with %d tokens", len(answer.split()))
-        return answer
+
+        generation_start = time.perf_counter()
+        partial_answer = ""
+        first_token_time: float | None = None
+        tokens_generated = 0
+        for index, chunk in enumerate(decode_generator):
+            token_text = chunk.get("choices", [{}])[0].get("text", "")
+            partial_answer += token_text
+            tokens_generated += 1
+
+            if first_token_time is None:
+                first_token_time = time.perf_counter()
+                prefill_duration = first_token_time - generation_start
+                prompt_eval_tps = prompt_tokens / prefill_duration if prefill_duration > 0 else None
+                if prompt_eval_tps:
+                    self.prompt_eval_tps_history.append(prompt_eval_tps)
+                logger.info(
+                    "Prefill completed in %.3fs for %d tokens (%.2f tok/s)",
+                    prefill_duration,
+                    prompt_tokens,
+                    prompt_eval_tps or -1.0,
+                )
+                yield GenerationProgress(
+                    stage="prefill_complete",
+                    detail=(
+                        f"Prefill finished in {prefill_duration:.2f}s. Preparing live token ETA."
+                    ),
+                    retrieval_seconds=retrieval_elapsed,
+                    prefill_seconds=prefill_duration,
+                    prompt_tokens=prompt_tokens,
+                    partial_answer=partial_answer,
+                    total_prompt_seconds=prefill_duration,
+                )
+                continue
+
+            decode_elapsed = time.perf_counter() - first_token_time
+            tokens_per_second = tokens_generated / decode_elapsed if decode_elapsed > 0 else None
+            eta_remaining = (
+                (max_tokens - tokens_generated) / tokens_per_second if tokens_per_second else None
+            )
+
+            yield GenerationProgress(
+                stage="generation",
+                detail="Streaming tokens with live ETA updates.",
+                retrieval_seconds=retrieval_elapsed,
+                prefill_seconds=first_token_time - generation_start if first_token_time else None,
+                prompt_tokens=prompt_tokens,
+                decode_tokens=tokens_generated,
+                tokens_per_second=tokens_per_second,
+                eta_seconds=eta_remaining,
+                partial_answer=partial_answer,
+            )
+
+        total_generation = time.perf_counter() - generation_start
+        if first_token_time:
+            decode_duration = total_generation - (first_token_time - generation_start)
+            decode_tps = tokens_generated / decode_duration if decode_duration > 0 else None
+            if decode_tps:
+                self.decode_tps_history.append(decode_tps)
+            logger.info(
+                "Generation completed in %.3fs (%d tokens @ %.2f tok/s)",
+                decode_duration,
+                tokens_generated,
+                decode_tps or -1.0,
+            )
+
+        yield GenerationProgress(
+            stage="done",
+            detail="Generation complete.",
+            retrieval_seconds=retrieval_elapsed,
+            prefill_seconds=(first_token_time - generation_start) if first_token_time else None,
+            prompt_tokens=prompt_tokens,
+            decode_tokens=tokens_generated,
+            tokens_per_second=(self.decode_tps_history[-1] if self.decode_tps_history else None),
+            eta_seconds=0.0,
+            partial_answer=partial_answer.strip(),
+        )
+
+    def query(self, question: str, top_k: int = 4) -> str:
+        """Generate a full response without streaming, preserving compatibility."""
+
+        final_answer = ""
+        for update in self.stream_query(question, top_k=top_k):
+            final_answer = update.partial_answer or final_answer
+        logger.debug("Non-streaming query produced %d characters", len(final_answer))
+        return final_answer
 
 
 _engine: RagEngine | None = None
@@ -219,6 +407,15 @@ def query_rag(question: str) -> str:
     if error_msg:
         return error_msg
     return engine.query(question)
+
+
+def stream_query_rag(question: str, max_tokens: int = 512) -> Generator[GenerationProgress, None, None]:
+    engine, error_msg = _safe_get_engine()
+    if error_msg:
+        yield GenerationProgress(stage="error", detail=error_msg)
+        return
+
+    yield from engine.stream_query(question, max_tokens=max_tokens)
 
 
 def get_documents_list() -> List[str]:
