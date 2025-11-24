@@ -28,6 +28,37 @@ from app.rag_chain import delete_document, get_documents_list, ingest_pdfs, quer
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Compatibility patches
+# ---------------------------------------------------------------------------
+
+# Gradio 4.44 can emit boolean JSON schemas for some dependency payloads when
+# analytics metadata is present. The default ``get_api_info`` helper does not
+# tolerate those values and raises ``TypeError: argument of type 'bool' is not
+# iterable`` during startup, which stops the ASGI app from rendering. To keep
+# the interface resilient, we wrap the original method with a defensive shim
+# that logs the failure and returns an empty schema instead of bubbling the
+# exception up through the request stack.
+_ORIGINAL_GET_API_INFO = gr.Blocks.get_api_info
+
+
+def _safe_get_api_info(self, *args, **kwargs):
+    """Safely compute API metadata, tolerating serialization edge cases."""
+
+    try:
+        return _ORIGINAL_GET_API_INFO(self, *args, **kwargs)
+    except TypeError as exc:  # pragma: no cover - guard for upstream changes
+        logger.exception(
+            "Failed to build Gradio API schema; returning empty descriptors for stability.",
+            exc_info=exc,
+        )
+        return {"named_endpoints": [], "unnamed_endpoints": []}
+
+
+if gr.Blocks.get_api_info is not _safe_get_api_info:
+    gr.Blocks.get_api_info = _safe_get_api_info
+
+
 class AppState(TypedDict):
     """State container shared across Gradio callbacks.
 
@@ -587,7 +618,11 @@ def build_app() -> gr.Blocks:
 
     logger.info("Initializing Gradio Blocks interface with custom theming and verbose instrumentation")
 
-    with gr.Blocks(css=CUSTOM_CSS, theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(
+        css=CUSTOM_CSS,
+        theme=gr.themes.Soft(),
+        analytics_enabled=False,
+    ) as demo:
         app_state = gr.State(_initial_state())
         user_state = gr.State("")
         role_state = gr.State("")
@@ -823,4 +858,9 @@ app = build_app()
 
 
 if __name__ == "__main__":
-    app.launch(share=SHARE_INTERFACE)
+    app.launch(
+        share=SHARE_INTERFACE,
+        server_name="0.0.0.0",
+        server_port=7860,
+        show_api=False,
+    )
