@@ -297,6 +297,15 @@ class RagEngine:
             total_prompt_seconds=estimated_prefill,
         )
 
+        yield GenerationProgress(
+            stage="prefill_start",
+            detail="Preparing prompt for model evaluation.",
+            retrieval_seconds=retrieval_elapsed,
+            prompt_tokens=prompt_tokens,
+            prefill_seconds=estimated_prefill,
+            total_prompt_seconds=estimated_prefill,
+        )
+
         decode_generator = self.llm(
             prompt,
             temperature=0.2,

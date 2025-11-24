@@ -538,6 +538,9 @@ def _format_eta_status(progress: GenerationProgress) -> str:
         )
         return retrieval_text + prefill_hint
 
+    if progress.stage == "prefill_start":
+        return "Preparing model input from retrieved context."
+
     if progress.stage == "prefill_complete":
         return (
             f"Prefill: {progress.prefill_seconds:.2f}s · Measuring token throughput for ETA."
@@ -566,6 +569,33 @@ def _format_eta_status(progress: GenerationProgress) -> str:
     return progress.detail or "Working…"
 
 
+def _stage_label(progress: GenerationProgress) -> str:
+    """Map backend stage codes to user-facing stage descriptions."""
+
+    if progress.stage == "retrieval":
+        return "Retrieving context…"
+    if progress.stage in {"prefill_start"}:
+        return "Preparing model input…"
+    if progress.stage in {"prefill_complete", "generation"}:
+        return "Generating answer…"
+    if progress.stage == "done":
+        return "Finalizing…"
+    if progress.stage == "error":
+        return "Error"
+    return "Working…"
+
+
+def _format_elapsed_label(seconds: float | None) -> str:
+    """Return a clock-style elapsed label suitable for the UI."""
+
+    if seconds is None:
+        return "Elapsed: --"
+
+    minutes = int(seconds) // 60
+    remaining = seconds - (minutes * 60)
+    return f"Elapsed: {minutes:02d}:{remaining:04.1f}"
+
+
 def respond(
     message: str,
     history: list[list[str]] | list[tuple[str, str]] | None,
@@ -583,9 +613,20 @@ def respond(
     if not sanitized:
         logger.warning("Empty prompt submitted for session %s", record.session_id)
         meta = _format_session_meta(record)
-        return "", record.history, "Please enter a prompt to continue.", record.session_id, meta
+        return (
+            "",
+            record.history,
+            "Please enter a prompt to continue.",
+            record.session_id,
+            meta,
+            "Ready to search.",
+            False,
+            gr.update(visible=False, value=""),
+        )
 
-    logger.info("Received query for session %s belonging to %s", record.session_id, _session_key(active_role, active_user))
+    logger.info(
+        "Received query for session %s belonging to %s", record.session_id, _session_key(active_role, active_user)
+    )
     start_time = time.perf_counter()
 
     existing_history = [(turn[0], turn[1]) for turn in (history or [])]
@@ -594,22 +635,62 @@ def respond(
     _persist_history(record.session_id, active_role, active_user, working_history)
 
     partial_answer = ""
+    error_detected = False
     for progress in stream_query_rag(sanitized):
         if progress.partial_answer:
             partial_answer = progress.partial_answer
         working_history[-1] = (sanitized, partial_answer)
         status_text = _format_eta_status(progress)
+        stage_text = _stage_label(progress)
         _persist_history(record.session_id, active_role, active_user, working_history)
         meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
-        logger.debug("Streaming update for session %s: %s", record.session_id, status_text)
-        yield "", working_history, status_text, record.session_id, meta
+        if progress.stage == "error":
+            error_detected = True
+            logger.error("Progress stream reported error for session %s: %s", record.session_id, status_text)
+            yield (
+                "",
+                working_history,
+                status_text,
+                record.session_id,
+                meta,
+                stage_text,
+                True,
+                gr.update(
+                    value=f"{status_text} — Try again.",
+                    visible=True,
+                ),
+            )
+            return
+
+        logger.debug(
+            "Streaming update for session %s: stage=%s detail=%s", record.session_id, progress.stage, status_text
+        )
+        yield (
+            "",
+            working_history,
+            status_text,
+            record.session_id,
+            meta,
+            stage_text,
+            error_detected,
+            gr.update(visible=False, value=""),
+        )
 
     elapsed = time.perf_counter() - start_time
     working_history[-1] = (sanitized, partial_answer)
     _persist_history(record.session_id, active_role, active_user, working_history)
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
     logger.info("Response for session %s completed in %.3f seconds", record.session_id, elapsed)
-    yield "", working_history, f"Response time: {elapsed:.2f}s", record.session_id, meta
+    yield (
+        "",
+        working_history,
+        f"Response time: {elapsed:.2f}s",
+        record.session_id,
+        meta,
+        "Finalizing…",
+        error_detected,
+        gr.update(visible=False, value=""),
+    )
 
 
 def begin_response_cycle(prompt: str, start_time: float | None) -> tuple:
@@ -617,7 +698,7 @@ def begin_response_cycle(prompt: str, start_time: float | None) -> tuple:
 
     sanitized = (prompt or "").strip()
     new_start = time.perf_counter()
-    thinking_text = "Thinking… typical response 5–20 seconds depending on corpus size."
+    thinking_text = "Retrieving context…"
     logger.info(
         "Starting response cycle at %.6f with prompt length=%d", new_start, len(sanitized)
     )
@@ -627,24 +708,36 @@ def begin_response_cycle(prompt: str, start_time: float | None) -> tuple:
         gr.update(visible=True),
         gr.update(interactive=False),
         gr.update(value=thinking_text, visible=True),
+        gr.update(value="Elapsed: 00:00.0", visible=True),
+        gr.update(value="ETA: calculating…", visible=True),
+        False,
+        gr.update(visible=False, value=""),
     )
 
 
-def finalize_response_cycle(current_timer: str, start_time: float | None) -> tuple:
+def finalize_response_cycle(current_timer: str, start_time: float | None, errored: bool) -> tuple:
     """Hide loading indicators, re-enable submission, and report elapsed time."""
 
     elapsed = (time.perf_counter() - start_time) if start_time else None
     done_text = (
-        f"Answered in {elapsed:.2f}s" if elapsed is not None else (current_timer or "Answered.")
+        "Encountered an error while generating the answer." if errored else (current_timer or "Answered.")
     )
+    elapsed_label = _format_elapsed_label(elapsed)
     logger.info(
-        "Finalizing response cycle; elapsed=%.3f, previous_timer=%s", elapsed or -1.0, current_timer
+        "Finalizing response cycle; elapsed=%.3f, previous_timer=%s, errored=%s",
+        elapsed or -1.0,
+        current_timer,
+        errored,
     )
     return (
-        gr.update(value=done_text, visible=False),
+        gr.update(value=("Finalizing…" if not errored else "Error"), visible=False),
         gr.update(visible=False),
         gr.update(interactive=True),
         gr.update(value=done_text, visible=True),
+        gr.update(value=elapsed_label, visible=True),
+        gr.update(value=("ETA: --" if errored else "ETA: complete"), visible=not errored),
+        gr.update(visible=errored, value=(done_text if errored else "")),
+        False,
     )
 
 
@@ -695,8 +788,15 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
             [],
             "Session inactive. Log in to begin.",
             "Response time: --",
-            "",
-            "",
+            gr.update(value="Ready to search.", visible=True),
+            gr.update(visible=False),
+            gr.update(value="Elapsed: 00:00.0", visible=False),
+            gr.update(value="ETA: calculating…", visible=False),
+            False,
+            gr.update(visible=False, value=""),
+            None,
+            gr.update(value=""),
+            gr.update(value=""),
             gr.update(value=_build_document_rows()),
             _render_library_overview([]),
             "Browse and manage ingested documents.",
@@ -730,6 +830,15 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         sessions[1],
         sessions[2],
         sessions[3],
+        gr.update(value="Ready to search.", visible=True),
+        gr.update(visible=False),
+        gr.update(value="Elapsed: 00:00.0", visible=False),
+        gr.update(value="ETA: calculating…", visible=False),
+        False,
+        gr.update(visible=False, value=""),
+        None,
+        gr.update(value=safe_username),
+        gr.update(value=role),
         safe_username,
         role,
         gr.update(value=doc_rows),
@@ -760,6 +869,13 @@ def logout(state: AppState) -> tuple:
         [],
         "Session ready. Conversations persist automatically.",
         "Response time: --",
+        gr.update(value="Ready to search.", visible=True),
+        gr.update(visible=False),
+        gr.update(value="Elapsed: 00:00.0", visible=False),
+        gr.update(value="ETA: calculating…", visible=False),
+        False,
+        gr.update(visible=False, value=""),
+        None,
         "",
         "",
         gr.update(value=_build_document_rows()),
@@ -853,10 +969,151 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
 .session-table table {width: 100%;}
 .session-table td:last-child, .docs-table td:last-child {text-align: center; width: 56px;}
 .status {color: #9ea8c2; font-size: 13px;}
+.status-row {align-items: center; gap: 10px; flex-wrap: wrap;}
+.status-row .status {margin: 0; padding: 0;}
+.loading-spinner {width: 20px; height: 20px; border-radius: 50%; border: 3px solid #1f2937; border-top-color: #6fb1ff; animation: spin 0.9s linear infinite;}
+@keyframes spin {to {transform: rotate(360deg);}}
+.error-banner {background: rgba(128, 38, 38, 0.35); color: #f6dada; padding: 8px 12px; border-radius: 8px; border: 1px solid #a94040; font-weight: 600;}
 .chatbot {background: #0f1117; border: 1px solid #1f232b; border-radius: 16px;}
 .card {padding: 14px; background: #0f1117; border: 1px solid #1f232b; border-radius: 12px;}
 .help-page {line-height: 1.6; color: #d9deeb;}
 @media (max-width: 960px){.layout-row{flex-direction:column;} .sidebar{max-width:100%; width:100%;}}
+"""
+
+TIMER_SCRIPT = """
+<script>
+(() => {
+  const HISTORY_KEY = "rag_latency_history";
+  const MAX_SAMPLES = 20;
+  let timerId = null;
+  let startTimestamp = null;
+  let lastStage = "";
+
+  const loadHistory = () => {
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (err) {
+      console.warn("Unable to parse latency history", err);
+      return [];
+    }
+  };
+
+  const saveSample = (ms) => {
+    const history = loadHistory();
+    history.push(ms);
+    if (history.length > MAX_SAMPLES) {
+      history.splice(0, history.length - MAX_SAMPLES);
+    }
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  };
+
+  const formatElapsed = (ms) => {
+    const totalSeconds = ms / 1000;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = (totalSeconds - minutes * 60).toFixed(1).padStart(4, "0");
+    return `${String(minutes).padStart(2, "0")}:${seconds}`;
+  };
+
+  const hideEta = () => {
+    const etaEl = document.querySelector("#eta-indicator");
+    if (etaEl) {
+      etaEl.textContent = "ETA: --";
+      etaEl.style.display = "none";
+    }
+  };
+
+  const renderTelemetry = () => {
+    if (!startTimestamp) return;
+    const elapsedMs = Date.now() - startTimestamp;
+    const elapsedEl = document.querySelector("#elapsed-indicator");
+    const etaEl = document.querySelector("#eta-indicator");
+    if (elapsedEl) {
+      elapsedEl.textContent = `Elapsed: ${formatElapsed(elapsedMs)}`;
+      elapsedEl.style.display = "";
+    }
+    if (etaEl) {
+      const history = loadHistory();
+      if (history.length < 3) {
+        etaEl.textContent = "ETA: calculating…";
+        etaEl.style.display = "";
+      } else {
+        const average = history.reduce((sum, value) => sum + value, 0) / history.length;
+        const remaining = Math.max(0, average - elapsedMs);
+        etaEl.textContent = `ETA: ~${(remaining / 1000).toFixed(1)}s`;
+        etaEl.style.display = "";
+      }
+    }
+  };
+
+  const startTimer = () => {
+    if (timerId) clearInterval(timerId);
+    startTimestamp = Date.now();
+    timerId = window.setInterval(renderTelemetry, 100);
+    renderTelemetry();
+  };
+
+  const stopTimer = (recordSample) => {
+    if (timerId) {
+      clearInterval(timerId);
+      timerId = null;
+    }
+    if (startTimestamp && recordSample) {
+      saveSample(Date.now() - startTimestamp);
+    }
+    startTimestamp = null;
+  };
+
+  const handleStageChange = (text) => {
+    const normalized = (text || "").toLowerCase();
+    if (!normalized) return;
+    if (normalized.startsWith("retrieving") || normalized.startsWith("preparing")) {
+      startTimer();
+      return;
+    }
+    if (normalized.startsWith("generating")) {
+      if (!startTimestamp) {
+        startTimer();
+      }
+      return;
+    }
+    if (normalized.startsWith("finalizing")) {
+      stopTimer(true);
+      return;
+    }
+    if (normalized.startsWith("error")) {
+      stopTimer(false);
+      hideEta();
+    }
+  };
+
+  const attach = () => {
+    const stageEl = document.querySelector("#stage-indicator");
+    const errorEl = document.querySelector("#error-banner");
+    if (!stageEl) {
+      window.setTimeout(attach, 400);
+      return;
+    }
+
+    window.setInterval(() => {
+      const stageText = (stageEl.textContent || "").trim();
+      if (stageText !== lastStage) {
+        lastStage = stageText;
+        handleStageChange(stageText);
+      }
+      if (errorEl && errorEl.textContent.trim()) {
+        stopTimer(false);
+        hideEta();
+      }
+      if (startTimestamp) {
+        renderTelemetry();
+      }
+    }, 150);
+  };
+
+  attach();
+})();
+</script>
 """
 
 
@@ -876,6 +1133,8 @@ def build_app() -> gr.Blocks:
         session_state = gr.State("")
         selected_doc_state = gr.State("")
         start_time_state = gr.State(None)
+        error_state = gr.State(False)
+        gr.HTML(TIMER_SCRIPT, visible=False, elem_id="timer-script")
 
         # ---------------------- Login Screen ----------------------
         with gr.Column(visible=True, elem_classes=["panel"], elem_id="login-view") as login_view:
@@ -925,16 +1184,37 @@ def build_app() -> gr.Blocks:
                             variant="primary",
                             scale=1,
                         )
-                    with gr.Row():
-                        response_timer = _safe_markdown("Response time: --", elem_classes=["status"])
-                        loading_gif = gr.Image(
-                            value=str(Path("app/assets/loading_spinner.gif")),
+                    with gr.Row(elem_classes=["status-row"]):
+                        loading_spinner = gr.HTML(
+                            value="<div class='loading-spinner' aria-label='Loading'></div>",
                             visible=False,
-                            show_label=False,
-                            container=False,
-                            height=64,
+                            elem_id="loading-spinner",
                         )
-                        thinking_md = _safe_markdown("", visible=False, elem_classes=["status"])
+                        stage_md = _safe_markdown(
+                            "Ready to search.", elem_classes=["status"], elem_id="stage-indicator"
+                        )
+                        elapsed_md = _safe_markdown(
+                            "Elapsed: 00:00.0",
+                            visible=False,
+                            elem_classes=["status"],
+                            elem_id="elapsed-indicator",
+                        )
+                        eta_md = _safe_markdown(
+                            "ETA: calculating…",
+                            visible=False,
+                            elem_classes=["status"],
+                            elem_id="eta-indicator",
+                        )
+                    with gr.Row(elem_classes=["status-row"]):
+                        response_timer = _safe_markdown(
+                            "Response time: --", elem_classes=["status"], elem_id="status-detail"
+                        )
+                        error_banner = _safe_markdown(
+                            "",
+                            visible=False,
+                            elem_classes=["error-banner"],
+                            elem_id="error-banner",
+                        )
                     chatbot = gr.Chatbot(height=520, bubble_full_width=False, elem_classes=["chatbot"])
                     with gr.Row():
                         clear_btn = gr.Button("Clear", elem_classes=["ghost"], variant="secondary")
@@ -1027,6 +1307,13 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 chatbot,
                 session_meta,
                 response_timer,
+                stage_md,
+                loading_spinner,
+                elapsed_md,
+                eta_md,
+                error_state,
+                error_banner,
+                start_time_state,
                 user_state,
                 role_state,
                 doc_table,
@@ -1055,6 +1342,13 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 chatbot,
                 session_meta,
                 response_timer,
+                stage_md,
+                loading_spinner,
+                elapsed_md,
+                eta_md,
+                error_state,
+                error_banner,
+                start_time_state,
                 user_state,
                 role_state,
                 doc_table,
@@ -1071,28 +1365,84 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
         hero_query.submit(
             begin_response_cycle,
             inputs=[hero_query, start_time_state],
-            outputs=[start_time_state, thinking_md, loading_gif, hero_submit_btn, response_timer],
+            outputs=[
+                start_time_state,
+                stage_md,
+                loading_spinner,
+                hero_submit_btn,
+                response_timer,
+                elapsed_md,
+                eta_md,
+                error_state,
+                error_banner,
+            ],
         ).then(
             respond,
             inputs=[hero_query, chatbot, app_state, session_state, user_state],
-            outputs=[hero_query, chatbot, response_timer, session_state, session_meta],
+            outputs=[
+                hero_query,
+                chatbot,
+                response_timer,
+                session_state,
+                session_meta,
+                stage_md,
+                error_state,
+                error_banner,
+            ],
         ).then(
             finalize_response_cycle,
-            inputs=[response_timer, start_time_state],
-            outputs=[thinking_md, loading_gif, hero_submit_btn, response_timer],
+            inputs=[response_timer, start_time_state, error_state],
+            outputs=[
+                stage_md,
+                loading_spinner,
+                hero_submit_btn,
+                response_timer,
+                elapsed_md,
+                eta_md,
+                error_banner,
+                error_state,
+            ],
         )
         hero_submit_btn.click(
             begin_response_cycle,
             inputs=[hero_query, start_time_state],
-            outputs=[start_time_state, thinking_md, loading_gif, hero_submit_btn, response_timer],
+            outputs=[
+                start_time_state,
+                stage_md,
+                loading_spinner,
+                hero_submit_btn,
+                response_timer,
+                elapsed_md,
+                eta_md,
+                error_state,
+                error_banner,
+            ],
         ).then(
             respond,
             inputs=[hero_query, chatbot, app_state, session_state, user_state],
-            outputs=[hero_query, chatbot, response_timer, session_state, session_meta],
+            outputs=[
+                hero_query,
+                chatbot,
+                response_timer,
+                session_state,
+                session_meta,
+                stage_md,
+                error_state,
+                error_banner,
+            ],
         ).then(
             finalize_response_cycle,
-            inputs=[response_timer, start_time_state],
-            outputs=[thinking_md, loading_gif, hero_submit_btn, response_timer],
+            inputs=[response_timer, start_time_state, error_state],
+            outputs=[
+                stage_md,
+                loading_spinner,
+                hero_submit_btn,
+                response_timer,
+                elapsed_md,
+                eta_md,
+                error_banner,
+                error_state,
+            ],
         )
         hero_clear_btn.click(
             clear_query_input,
@@ -1185,6 +1535,13 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 chatbot,
                 session_meta,
                 response_timer,
+                stage_md,
+                loading_spinner,
+                elapsed_md,
+                eta_md,
+                error_state,
+                error_banner,
+                start_time_state,
                 user_state,
                 role_state,
                 doc_table,
@@ -1212,6 +1569,13 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 chatbot,
                 session_meta,
                 response_timer,
+                stage_md,
+                loading_spinner,
+                elapsed_md,
+                eta_md,
+                error_state,
+                error_banner,
+                start_time_state,
                 user_state,
                 role_state,
                 doc_table,
