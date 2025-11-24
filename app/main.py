@@ -778,6 +778,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         sessions[2],
         sessions[3],
         sessions[4],
+        sessions[5],
         safe_username,
         role,
         gr.update(value=doc_rows),
