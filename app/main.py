@@ -436,10 +436,16 @@ def filter_documents(query: str | None) -> tuple[gr.update, str]:
 
 
 def handle_document_action(
-    selected: list[str] | str, event: gr.SelectData | None, query: str | None, state: AppState
+    selected: list[str] | str,
+    event: gr.SelectData | None = None,
+    query: str | None = None,
+    state: AppState | None = None,
 ) -> tuple[gr.update, str, str]:
     """React to document table clicks for selection or deletion."""
 
+    if state is None:
+        logger.warning("Document action invoked without state; defaulting to empty context")
+        state = {}
     role = state.get("role") or "user"
     filter_text = query or ""
     row_index, col_index = 0, 0
@@ -610,10 +616,16 @@ def clear_session_history(session_id: str, state: AppState) -> tuple:
 
 
 def handle_session_table_selection(
-    selected: list[str] | str, event: gr.SelectData | None, state: AppState
+    selected: list[str] | str,
+    event: gr.SelectData | None = None,
+    state: AppState | None = None,
 ) -> tuple:
     """Route session table selections to view actions while tracking delete intent."""
 
+    if state is None:
+        logger.warning("Session table selection invoked without state; using empty defaults for safety")
+        state = {}
+    
     role = state.get("role") or "user"
     username = state.get("user") or role
     row_index, col_index = 0, 0
