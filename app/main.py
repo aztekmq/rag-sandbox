@@ -188,10 +188,10 @@ def _ensure_default_session(role: str, username: str) -> SessionRecord:
 
 
 def _session_rows(role: str, username: str) -> list[list[str]]:
-    """Return tabular rows for rendering sessions alongside delete controls."""
+    """Return tabular rows for rendering sessions in the selector."""
 
     choices = _list_session_choices(role, username)
-    rows = [[label, "✖"] for label, _ in choices]
+    rows = [[label] for label, _ in choices]
     logger.debug("Prepared %d session rows for display", len(rows))
     return rows
 
@@ -276,19 +276,6 @@ def _load_session(role: str, username: str, session_id: str | None) -> SessionRe
         return bucket[session_id]
 
     logger.info("Requested session not found; returning default for %s", _session_key(role, username))
-    return _ensure_default_session(role, username)
-
-
-def _delete_session(role: str, username: str, session_id: str | None) -> SessionRecord:
-    """Delete a session and return the next available record."""
-
-    bucket = _get_session_bucket(role, username)
-    if session_id and session_id in bucket:
-        bucket.pop(session_id)
-        logger.info("Deleted session %s for %s", session_id, _session_key(role, username))
-    elif session_id:
-        logger.warning("Attempted to delete nonexistent session %s for %s", session_id, _session_key(role, username))
-
     return _ensure_default_session(role, username)
 
 
@@ -583,25 +570,6 @@ def select_session(session_id: str, state: AppState) -> tuple:
     )
 
 
-def remove_session(session_id: str | None, state: AppState) -> tuple:
-    """Delete the selected session and refresh selection controls."""
-
-    role = state.get("role") or "user"
-    username = state.get("user") or role
-    record = _delete_session(role, username, session_id)
-    logger.info("Session %s removed; activating %s for %s", session_id, record.session_id, _session_key(role, username))
-    choices = _list_session_choices(role, username)
-    meta = _format_session_meta(record)
-    return (
-        gr.update(choices=choices, value=record.session_id),
-        gr.update(value=_session_rows(role, username)),
-        record.session_id,
-        record.history,
-        meta,
-        "Response time: --",
-    )
-
-
 def clear_session_history(session_id: str, state: AppState) -> tuple:
     """Clear the active session while keeping the conversation record available."""
 
@@ -644,23 +612,12 @@ def handle_session_table_selection(
     target_index = max(0, min(row_index, len(choices) - 1))
     target_session = choices[target_index][1]
     logger.info(
-        "Session table click on row %d column %d for session %s; delete column=%s",
+        "Session table click on row %d column %d for session %s",
         row_index,
         col_index,
         target_session,
-        col_index == 1,
     )
-
-    # Clicking the delete column now only selects the session; deletion is handled via
-    # a dedicated button with JS confirmation to remain compatible across Gradio versions.
     return select_session(target_session, state)
-
-
-def confirm_and_remove_session(session_id: str | None, state: AppState) -> tuple:
-    """Remove the requested session after client-side confirmation."""
-
-    logger.info("Delete button invoked for session %s", session_id)
-    return remove_session(session_id, state)
 
 
 def respond(
@@ -951,16 +908,15 @@ def build_app() -> gr.Blocks:
                 new_session_btn = gr.Button("New Search / Session", elem_classes=["primary"], variant="primary")
                 session_table = gr.Dataframe(
                     label="Recent Sessions",
-                    headers=["Session", ""],
-                    datatype=["str", "str"],
+                    headers=["Session"],
+                    datatype=["str"],
                     row_count=(0, "dynamic"),
-                    col_count=2,
+                    col_count=1,
                     value=[],
                     interactive=True,
                     wrap=True,
                     elem_classes=["session-table"],
                 )
-                session_delete_btn = gr.Button("Delete Session", variant="stop", elem_classes=["ghost"])
                 session_radio = gr.Radio(label="Recent Sessions", choices=[], interactive=True, visible=False)
                 session_meta = _safe_markdown("Select a session to begin.", elem_classes=["status"])
                 manage_docs_btn = gr.Button("Manage Docs", elem_classes=["ghost"], variant="secondary")
@@ -1034,7 +990,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 **Sessions**
 - "New Search / Session" starts a clean conversation.
 - Select any recent session to view its history.
-- Use the Delete Session button after selecting a row to remove it with confirmation.
+- Sessions persist automatically so you can return to them later without manual cleanup.
 
 **Manage Docs**
 - Use the Manage Docs view to ingest PDFs and review the knowledge base.
@@ -1137,15 +1093,6 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             handle_session_table_selection,
             inputs=[app_state],
             outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
-        )
-        session_delete_btn.click(
-            confirm_and_remove_session,
-            inputs=[session_state, app_state],
-            outputs=[session_radio, session_table, session_state, chatbot, session_meta, response_timer],
-            # Using the public ``js`` keyword keeps compatibility with newer Gradio APIs
-            # that reject the deprecated ``_js`` argument while still providing a
-            # client-side confirmation step for destructive actions.
-            js="() => confirm('Delete this session?')",
         )
 
         # Document tools
