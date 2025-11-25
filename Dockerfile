@@ -9,8 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
-# Use verbose logging during dependency installation to aid debugging in CI/CD
-# and container build workflows, following international documentation standards.
+# Use AVX2/FMA/F16C-optimized llama.cpp bindings to avoid scalar fallbacks that
+# cause multi-minute prefill times on modern CPUs. FORCE_CMAKE guarantees a
+# source build so the CMAKE_ARGS take effect even when prebuilt wheels exist.
+# Verbose logging remains enabled to align with the repository's debugging
+# posture and international documentation standards.
+ENV CMAKE_ARGS="-DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_F16C=on -DLLAMA_FMA=on -DCMAKE_BUILD_TYPE=Release"
+ENV FORCE_CMAKE=1
 RUN pip install --verbose --no-cache-dir -r requirements.txt
 
 FROM python:3.11-slim
