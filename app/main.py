@@ -1,9 +1,10 @@
-"""
-Claude-style landing page for MQ-RAG.
+"""Sleek ChatGPT-style Gradio interface for MQ-RAG.
 
-This refactor makes the Gradio UI visually mimic the Claude “Good afternoon, rob”
-screen, but branded as “MQ-RAG AI”. It intentionally avoids extra panels and
-controls that are not visible in the reference screenshot.
+The previous Claude-inspired landing page has been replaced with a modern,
+compact layout that mirrors the conversational feel of ChatGPT. A collapsible
+sidebar, minimalist controls, and a bottom-aligned input keep the focus on the
+conversation while still exposing history and utilities. Verbose logging is
+used throughout to simplify troubleshooting.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Tuple, TypedDict, Any
+from typing import Any, Dict, List, Tuple, TypedDict
 
 import gradio as gr
 
@@ -28,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SessionRecord:
+    """Persist a user's chat history and timestamps for the session."""
+
     session_id: str
     history: List[Tuple[str, str]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -35,16 +38,32 @@ class SessionRecord:
 
 
 class AppState(TypedDict):
+    """Typed dictionary stored in the Gradio state container."""
+
     user: str
     session_id: str
 
 
 SESSION_STORE: Dict[str, SessionRecord] = {}
+DEFAULT_SOURCES: list[list[Any]] = [
+    [
+        "Knowledge Base",
+        "Upload or sync documents to see citation details for each answer.",
+        None,
+    ]
+]
+
+
+def _default_sources() -> list[list[Any]]:
+    """Return a shallow copy of the default source rows for UI binding."""
+
+    return [list(row) for row in DEFAULT_SOURCES]
 
 
 def _get_or_create_session(username: str, session_id: str | None) -> SessionRecord:
     """Return an existing session or create a new one for this user."""
     if session_id and session_id in SESSION_STORE:
+        logger.debug("Reusing existing session %s for user %s", session_id, username)
         return SESSION_STORE[session_id]
 
     new_id = session_id or str(uuid.uuid4())
@@ -72,29 +91,41 @@ def _time_based_greeting(username: str) -> str:
 # Chat handler
 # ---------------------------------------------------------------------------
 
-def respond(
+
+def _format_answer(query: str, answer: str) -> str:
+    """Compose the display-friendly Markdown for the main response panel."""
+    return f"**Query:** *{query}*\n\n**AI Result:** {answer}"
+
+
+def handle_query(
     message: str,
     history: List[List[str]] | None,
     state: AppState,
-) -> Tuple[str, List[List[str]], AppState]:
-    """
-    Minimal chat handler: send prompt to query_rag, append answer to history,
-    clear the input box, and keep session state.
-    """
+) -> Tuple[List[List[str]], str, List[List[Any]], AppState, str]:
+    """Process a user query, update chat history, and format UI outputs."""
+
     username = state.get("user", "rob")
     session_id = state.get("session_id") or ""
     record = _get_or_create_session(username, session_id)
 
     text = (message or "").strip()
     if not text:
-        return "", history or [], state
+        logger.debug(
+            "Received empty query for user=%s session=%s; prompting for input",
+            username,
+            record.session_id,
+        )
+        return (
+            history or [],
+            "Please enter a question to begin.",
+            _default_sources(),
+            state,
+            "",
+        )
 
     logger.info("Handling query for user=%s session=%s", username, record.session_id)
 
-    # Call your RAG backend
     answer = query_rag(text)
-
-    # Normalize history to list[list[str]]
     history_pairs: List[List[str]] = [list(turn) for turn in (history or [])]
     history_pairs.append([text, answer])
 
@@ -102,225 +133,56 @@ def respond(
     record.updated_at = datetime.utcnow()
     state["session_id"] = record.session_id
 
-    # Return cleared textbox, updated chat, and updated state
-    return "", history_pairs, state
+    logger.debug(
+        "Updated session %s with %d total turns", record.session_id, len(history_pairs)
+    )
+
+    formatted_answer = _format_answer(text, answer)
+    return history_pairs, formatted_answer, _default_sources(), state, ""
+
+
+def start_new_conversation(
+    state: AppState,
+) -> Tuple[List[List[str]], str, List[List[Any]], AppState, str]:
+    """Reset the chat for a fresh session while retaining the username."""
+
+    logger.info("Starting a new conversation for user=%s", state.get("user", "rob"))
+    state["session_id"] = ""
+    greeting = "The AI is ready. Enter your query below."
+    return [], greeting, _default_sources(), state, ""
+
+
+def toggle_sidebar(current_visibility: bool) -> Tuple[bool, gr.update]:
+    """Flip the sidebar visibility state and emit an updated column config."""
+
+    new_state = not current_visibility
+    logger.debug("Sidebar visibility toggled to %s", new_state)
+    return new_state, gr.Column.update(visible=new_state)
 
 
 # ---------------------------------------------------------------------------
-# CSS to mimic the Claude new-chat screen
+# Minimalist CSS and layout helpers
 # ---------------------------------------------------------------------------
 
 CUSTOM_CSS = """
-body, .gradio-container {
-    background: #FCF7EF;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
-}
+.gradio-container { padding: 0 !important; }
+.svelte-17w9n8 { padding: 8px !important; }
 
-/* Layout */
-.main-layout {
-    display: flex;
-    height: 100vh;
-    max-width: 100vw;
-}
+/* Sidebar styling */
+.sidebar { background: #f9f9fb; border-right: 1px solid #e6e8ec; gap: 12px; }
+.sidebar .gr-button { justify-content: flex-start; }
+.sidebar .gr-button-primary { width: 100%; }
+.sidebar .gr-markdown { margin: 0; }
 
-/* Sidebar */
-.sidebar {
-    width: 260px;
-    padding: 24px 20px;
-    box-sizing: border-box;
-    border-right: 1px solid #F0E6D9;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-}
+/* Main area */
+.main-area { padding: 12px 16px; gap: 12px; }
+.response-box label { display: none; }
+.response-box { min-height: 140px; }
+.toggle-icon button { padding: 4px 10px; line-height: 1; font-size: 1.2em; }
+.input-row { align-items: center; }
 
-.sidebar-title {
-    font-size: 26px;
-    font-weight: 600;
-    margin-bottom: 24px;
-}
-
-.sidebar-nav button {
-    justify-content: flex-start;
-    width: 100%;
-    border-radius: 999px;
-    margin-bottom: 4px;
-    font-weight: 500;
-}
-
-.sidebar-nav button.primary-nav {
-    background: #F6EFE3;
-    border: none;
-}
-
-.sidebar-nav button.secondary-nav {
-    background: transparent;
-    border: none;
-}
-
-.sidebar-footer {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 14px;
-    margin-top: 32px;
-}
-
-.sidebar-avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 999px;
-    background: #3C3C3C;
-    color: white;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-}
-
-/* Main panel */
-.main-panel {
-    flex: 1;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding-top: 80px;
-}
-
-.main-inner {
-    width: 720px;
-}
-
-/* Top pill */
-.plan-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
-    border-radius: 999px;
-    background: white;
-    border: 1px solid #EFE3D3;
-    font-size: 13px;
-    color: #7A6A55;
-    margin-bottom: 40px;
-}
-
-/* Greeting */
-.greeting-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 18px;
-}
-
-.greeting-icon {
-    font-size: 26px;
-}
-
-.greeting-text {
-    font-size: 36px;
-    font-weight: 500;
-    color: #3A3226;
-}
-
-/* Prompt card */
-.prompt-card {
-    margin-top: 20px;
-    background: #FFF9F2;
-    border-radius: 24px;
-    box-shadow: 0 18px 60px rgba(0,0,0,0.04);
-    padding: 18px 20px 14px 20px;
-}
-
-.prompt-row {
-    display: flex;
-    gap: 12px;
-    align-items: stretch;
-}
-
-.hero-input textarea {
-    border: none !important;
-    box-shadow: none !important;
-    resize: none;
-    background: transparent;
-    font-size: 16px;
-    padding-left: 0;
-    padding-right: 0;
-}
-
-.hero-input label {
-    display: none;
-}
-
-/* Accessories underneath textbox */
-.accessory-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 10px;
-}
-
-.accessory-left {
-    display: flex;
-    gap: 6px;
-}
-
-.icon-btn button {
-    width: 28px;
-    height: 28px;
-    border-radius: 999px;
-    border: none;
-    background: transparent;
-    font-size: 15px;
-}
-
-.model-select .wrap {
-    border-radius: 999px !important;
-    background: white !important;
-    border: 1px solid #E7D9C7 !important;
-    font-size: 13px;
-}
-
-.send-btn button {
-    width: 38px;
-    height: 38px;
-    border-radius: 999px;
-    border: none;
-    background: #F3C3A0;
-    font-size: 18px;
-}
-
-/* Bottom banner under card */
-.tools-banner {
-    font-size: 13px;
-    color: #8B7A64;
-    margin-top: 10px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.tools-icons {
-    display: flex;
-    gap: 6px;
-}
-
-.tools-icon-pill {
-    width: 26px;
-    height: 18px;
-    border-radius: 999px;
-    background: #E1D8C9;
-}
-
-/* Chatbot area: keep invisible border to resemble empty space */
-.chatbot-container {
-    margin-top: 32px;
-}
-
-.chatbot-container .gr-chatbot {
-    border: none;
-    background: transparent;
-}
+/* Chatbot appearance */
+.compact-chatbot .gr-chatbot { min-height: 260px; }
 """
 
 
@@ -328,98 +190,93 @@ body, .gradio-container {
 # UI assembly
 # ---------------------------------------------------------------------------
 
+
 def build_app() -> gr.Blocks:
-    logger.info("Initializing Claude-style MQ-RAG UI")
+    """Build the Gradio Blocks interface with a collapsible sidebar."""
+    logger.info("Initializing sleek MQ-RAG UI")
 
     initial_state: AppState = {"user": "rob", "session_id": ""}
 
-    with gr.Blocks(css=CUSTOM_CSS, theme=gr.themes.Soft(), analytics_enabled=False) as demo:
+    with gr.Blocks(
+        css=CUSTOM_CSS, theme=gr.themes.Soft(), analytics_enabled=False, title="AI Assistant"
+    ) as demo:
         app_state = gr.State(initial_state)
+        sidebar_visible = gr.State(True)
 
-        with gr.Row(elem_classes=["main-layout"]):
+        with gr.Row(equal_height=True):
+            # Sidebar
+            with gr.Column(
+                scale=1, min_width=250, visible=True, elem_classes=["sidebar"]
+            ) as sidebar_column:
+                new_chat_btn = gr.Button("➕ New Search", variant="primary", size="sm")
+                gr.Markdown("### 📜 History")
+                gr.Markdown("- *Recent MQ deep dive*")
+                gr.Markdown("- *RAG pipeline overview*")
+                gr.Markdown("- *Throughput telemetry*")
+                gr.Markdown("---")
+                gr.Markdown("### 🛠️ Tools")
+                with gr.Row():
+                    gr.Button("⚙️ Settings", size="sm", min_width=0)
+                    gr.Button("💾 Export", size="sm", min_width=0)
+                    gr.Button("👤 Account", size="sm", min_width=0)
 
-            # ---------------- Sidebar ----------------
-            with gr.Column(elem_classes=["sidebar"]):
-                with gr.Column():
-                    gr.Markdown("**MQ-RAG AI**", elem_classes=["sidebar-title"])
-                    with gr.Column(elem_classes=["sidebar-nav"]):
-                        gr.Button("New chat", elem_classes=["primary-nav"])
-                        gr.Button("Chats", elem_classes=["secondary-nav"])
-                        gr.Button("Projects", elem_classes=["secondary-nav"])
-                        gr.Button("Artifacts", elem_classes=["secondary-nav"])
+            # Main content
+            with gr.Column(scale=4, elem_classes=["main-area"]):
+                with gr.Row():
+                    toggle_icon = gr.Button(
+                        "☰", size="sm", min_width=50, elem_classes=["toggle-icon"]
+                    )
+                    gr.Markdown(_time_based_greeting("rob"))
 
-                with gr.Column(elem_classes=["sidebar-footer"]):
-                    gr.HTML('<div class="sidebar-avatar">R</div>')
-                    gr.Markdown("**rob**  \nFree plan")
+                chatbot = gr.Chatbot(
+                    label="Conversation",
+                    bubble_full_width=True,
+                    show_copy_button=True,
+                    elem_classes=["compact-chatbot"],
+                )
 
-            # ---------------- Main panel ----------------
-            with gr.Column(elem_classes=["main-panel"]):
-                with gr.Column(elem_classes=["main-inner"]):
+                main_output = gr.Markdown(
+                    label="Search Result",
+                    value="The AI is ready. Enter your query below.",
+                    elem_classes=["response-box"],
+                )
 
-                    # Plan pill
-                    gr.HTML('<div class="plan-pill">Free plan · <span style="text-decoration: underline;">Upgrade</span></div>')
+                with gr.Accordion("📚 View Sources & Context", open=False):
+                    source_output = gr.Dataframe(
+                        headers=["Source", "Snippet", "Relevance"],
+                        datatype=["str", "str", "number"],
+                        row_count=3,
+                        col_count=(3, "fixed"),
+                        interactive=False,
+                        value=_default_sources(),
+                    )
 
-                    # Greeting
-                    greeting = _time_based_greeting("rob")
-                    with gr.Row(elem_classes=["greeting-row"]):
-                        gr.Markdown("✺", elem_classes=["greeting-icon"])
-                        gr.Markdown(greeting, elem_classes=["greeting-text"])
+                with gr.Row(scale=1, variant="panel", elem_classes=["input-row"]):
+                    query_input = gr.Textbox(
+                        lines=1,
+                        placeholder="Ask the AI a question...",
+                        container=False,
+                        scale=4,
+                    )
+                    search_btn = gr.Button("Send", variant="primary", scale=1, size="sm")
 
-                    # Prompt card
-                    with gr.Column(elem_classes=["prompt-card"]):
+        # Wiring
+        search_inputs = [query_input, chatbot, app_state]
+        search_outputs = [chatbot, main_output, source_output, app_state, query_input]
 
-                        with gr.Row(elem_classes=["prompt-row"]):
-                            # Left: textbox + accessories
-                            with gr.Column():
-                                hero_query = gr.Textbox(
-                                    value="",
-                                    placeholder="How can I help you today?",
-                                    lines=2,
-                                    label="",
-                                    elem_classes=["hero-input"],
-                                )
+        search_btn.click(fn=handle_query, inputs=search_inputs, outputs=search_outputs)
+        query_input.submit(fn=handle_query, inputs=search_inputs, outputs=search_outputs)
 
-                                with gr.Row(elem_classes=["accessory-row"]):
-                                    # left icons
-                                    with gr.Row(elem_classes=["accessory-left"]):
-                                        gr.Button("+", elem_classes=["icon-btn"], variant="secondary")
-                                        gr.Button("≡", elem_classes=["icon-btn"], variant="secondary")
-                                        gr.Button("🕓", elem_classes=["icon-btn"], variant="secondary")
-                                    # (right section intentionally blank in screenshot)
-                                    gr.Markdown("")
-
-                            # Right: model dropdown + send button
-                            with gr.Column():
-                                model_select = gr.Dropdown(
-                                    choices=["Sonnet 4.5"],
-                                    value="Sonnet 4.5",
-                                    label="",
-                                    elem_classes=["model-select"],
-                                )
-                                send_btn = gr.Button("↑", elem_classes=["send-btn"])
-
-                        # Under-card tools banner
-                        with gr.Row(elem_classes=["tools-banner"]):
-                            gr.Markdown("Upgrade to connect your tools to MQ-RAG AI")
-                            with gr.Row(elem_classes=["tools-icons"]):
-                                gr.HTML('<div class="tools-icon-pill"></div>')
-                                gr.HTML('<div class="tools-icon-pill"></div>')
-
-                    # Chat output (looks like empty area beneath card)
-                    with gr.Column(elem_classes=["chatbot-container"]):
-                        chatbot = gr.Chatbot(label="", bubble_full_width=False)
-
-        # ---------------- Wiring ----------------
-
-        hero_query.submit(
-            respond,
-            inputs=[hero_query, chatbot, app_state],
-            outputs=[hero_query, chatbot, app_state],
+        new_chat_btn.click(
+            fn=start_new_conversation,
+            inputs=[app_state],
+            outputs=[chatbot, main_output, source_output, app_state, query_input],
         )
-        send_btn.click(
-            respond,
-            inputs=[hero_query, chatbot, app_state],
-            outputs=[hero_query, chatbot, app_state],
+
+        toggle_icon.click(
+            fn=toggle_sidebar,
+            inputs=[sidebar_visible],
+            outputs=[sidebar_visible, sidebar_column],
         )
 
     return demo
