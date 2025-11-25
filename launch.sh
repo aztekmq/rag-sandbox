@@ -5,6 +5,8 @@
 # - BuildKit with plain (verbose) progress
 # - clean restart of mq-rag service/container
 
+docker image prune -a -f
+
 set -Eeuo pipefail
 set -x
 
