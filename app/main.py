@@ -562,13 +562,35 @@ def respond(
     partial_answer = ""
     logger.debug("Streaming response for session %s initiated", record.session_id)
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
-    yield (
-        "",
-        working_history,
-        record.session_id,
-        meta,
-        gr.update(interactive=False),
-    )
+
+    last_payload: tuple[tuple[tuple[str, str], ...], bool] | None = None
+
+    def _emit_if_changed(interactive: bool):
+        """Yield a UI update only when the visible payload changes."""
+
+        nonlocal last_payload, meta
+        snapshot = tuple(working_history)
+        payload_key = (snapshot, interactive)
+
+        if payload_key == last_payload:
+            logger.debug(
+                "Suppressing duplicate UI emission for session %s; state unchanged", record.session_id
+            )
+            return
+
+        last_payload = payload_key
+        logger.debug(
+            "Emitting UI update for session %s with %d conversation turns", record.session_id, len(snapshot)
+        )
+        yield (
+            "",
+            working_history,
+            record.session_id,
+            meta,
+            gr.update(interactive=interactive),
+        )
+
+    yield from _emit_if_changed(interactive=False)
 
     for progress in stream_query_rag(sanitized):
         if progress.partial_answer:
@@ -581,38 +603,20 @@ def respond(
             working_history[-1] = (sanitized, error_text)
             logger.error("Progress stream reported error for session %s: %s", record.session_id, error_text)
             _persist_history(record.session_id, active_role, active_user, working_history)
-            yield (
-                "",
-                working_history,
-                record.session_id,
-                meta,
-                gr.update(interactive=True),
-            )
+            yield from _emit_if_changed(interactive=True)
             return
 
         logger.debug(
             "Streaming update for session %s: stage=%s", record.session_id, progress.stage
         )
-        yield (
-            "",
-            working_history,
-            record.session_id,
-            meta,
-            gr.update(interactive=False),
-        )
+        yield from _emit_if_changed(interactive=False)
 
     elapsed = time.perf_counter() - active_start
     working_history[-1] = (sanitized, partial_answer)
     _persist_history(record.session_id, active_role, active_user, working_history)
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
     logger.info("Response for session %s completed in %.3f seconds", record.session_id, elapsed)
-    yield (
-        "",
-        working_history,
-        record.session_id,
-        meta,
-        gr.update(interactive=True),
-    )
+    yield from _emit_if_changed(interactive=True)
 
 
 def clear_query_input(current_value: str) -> str:
