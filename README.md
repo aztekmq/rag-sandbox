@@ -226,6 +226,30 @@ indexes, and logs continue to persist on disk between runs via the mounted
 prewarm automatically runs again so first-question latency steadily improves
 once the thread completes.
 
+## Behind-the-scenes ingest flow
+
+1. **Upload handling and persistence**
+   * Incoming Gradio uploads (or file paths) are normalized to real paths, preserving original names while sanitizing them for the PDF storage directory (`data/pdfs`). Verbose debug/info logs trace each candidate path and final resolution. If nothing is uploaded, the handler short-circuits with a warning. Failures are collected with stack traces to keep the UI response actionable.
+
+   * Successfully resolved files are written to the PDF directory before ingestion begins, ensuring the vectorization step always reads from a stable on-disk location. All writes and errors are logged for traceability.
+
+2. **PDF text extraction and chunking**
+   * The ingestion utility spins up a `PdfIngestor` with configurable chunk sizing/overlap, logging the parameters up front. Each PDF is opened with PyPDFium, page-by-page text is extracted with debug-level progress, and the full document text is split into overlapping chunks while recording byte offsets for metadata. The module emits info-level summaries for every file and a roll-up of total PDFs and chunks processed.
+
+   * Nonexistent PDFs are skipped with warnings to avoid hard failures during batch runs.
+
+3. **Embedding generation and vector-store write**
+   * The RAG engine gathers all PDFs from the ingest directory, runs the chunker, and then calls the embedding layer. It handles missing embedding assets explicitly—logging exceptions and returning guidance on placing the Snowflake Arctic model locally or enabling downloads—before proceeding. Successful runs upsert chunk embeddings, raw text, and metadata into the Chroma collection and log the totals for auditing.
+
+   * The embedding helper enforces offline-first behavior, verifying assets exist under `EMBEDDING_MODEL_DIR` (or downloading them when allowed), loading the model once via an LRU cache, and providing detailed logging around asset discovery and encoding throughput.
+
+4. **Operational safeguards and telemetry**
+   * Global configuration sets DEBUG-level logging by default, writes to both console and `data/logs/app.log`, and ensures required directories (PDFs, Chroma DB, logs, models) exist before ingestion. Offline defaults prevent accidental network calls unless explicitly enabled via `ALLOW_HF_INTERNET`, aligning with the request for verbose, auditable operations.
+
+   * Ingestion status is surfaced back to the UI through `ingest_pdfs()` responses, allowing administrators to see success counts or actionable error messages after each run.
+
+All steps follow verbose logging conventions so activities can be debugged easily and remain aligned with international programming and scripting standards.
+
 ## Operations
 - **Upload PDFs (Admin)**: Add IBM MQ PDFs via the left panel, then click **Re-index all PDFs**. Files are stored in `/app/data/pdfs`.
 - **Delete documents (Admin)**: Select a document from the dropdown and click **Delete selected** to remove its chunks from Chroma.
