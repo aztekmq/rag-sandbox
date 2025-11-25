@@ -962,11 +962,23 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
   padding: 0 !important;
 }
 
+#search-view .gr-chatbot .message,
+#search-view .gr-chatbot .message * {
+  /*
+   * Gradio occasionally injects decorative quote glyphs via pseudo-elements
+   * around chat messages. These markers wrap user prompts with pipes similar
+   * to the screenshot provided by the user. To keep prompts readable and
+   * standards-compliant, explicitly clear pseudo content and any implicit
+   * quote styling on both the message wrapper and its children.
+   */
+  quotes: "" "";
+}
+
 #search-view .gr-chatbot .message::before,
 #search-view .gr-chatbot .message::after,
 #search-view .gr-chatbot .message *::before,
 #search-view .gr-chatbot .message *::after {
-  content: none !important;
+  content: "" !important;
   display: none !important;
 }
 
