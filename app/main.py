@@ -836,18 +836,19 @@ def return_to_search(state: AppState) -> tuple:
 
 
 CUSTOM_CSS = """
-/* Compact, standards-aligned styling to reduce whitespace while keeping the MQ UI legible. */
-body {background: #0d0f12; color: #e8ebf1;}
+/* Ops dashboard theme: dark, compact, and data-dense to keep workflows visible. */
+body {background: #0f1117; color: #e6e9ef;}
 
 .gradio-container {
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  width: min(880px, calc(100% - 8px));
+  width: 100%;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 4px !important;
-  gap: 6px !important;
+  padding: 6px 10px !important;
+  gap: 8px !important;
 }
 
-/* Global compaction to minimize scroll and collapse empty wrappers. */
+/* Global compaction to limit scroll and keep content above the fold. */
 .gradio-container .block,
 .gradio-container .gr-block,
 .gradio-container .gr-form,
@@ -857,14 +858,14 @@ body {background: #0d0f12; color: #e8ebf1;}
 .gradio-container .wrap {
   margin: 4px 0 !important;
   padding: 4px !important;
-  gap: 4px !important;
+  gap: 6px !important;
 }
 
 .gradio-container .row,
 .gradio-container .gr-row,
 .gradio-container .column,
 .gradio-container .gr-column {
-  gap: 4px !important;
+  gap: 8px !important;
   margin: 2px 0 !important;
 }
 
@@ -876,48 +877,85 @@ body {background: #0d0f12; color: #e8ebf1;}
   padding: 0 !important;
 }
 
-.panel {background: #14171c; border: 1px solid #1f232b; border-radius: 14px; box-shadow: 0 8px 30px rgba(0,0,0,0.35);}
-.sidebar {min-width: 280px; max-width: 320px; padding: 10px; gap: 8px;}
+.dashboard {gap: 10px !important;}
+.header-bar {
+  background: #141824;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 8px 12px !important;
+  align-items: center;
+}
 
-#search-view {
-  padding: 4px 6px 6px !important;
-  gap: 6px !important;
+.header-left h3 {margin: 0 !important; font-size: 18px !important; color: #e6e9ef;}
+.header-right {justify-content: flex-end; gap: 10px !important;}
+
+.badge {background: rgba(255,255,255,0.06); color: #9aa3b2; padding: 6px 10px; border-radius: 8px; font-size: 12px;}
+
+.body-row {align-items: stretch; gap: 10px !important;}
+.nav-rail {
+  min-width: 240px;
+  max-width: 280px;
+  background: #141824;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 10px 10px 12px !important;
+  gap: 10px !important;
+}
+.nav-rail .section-title {font-size: 12px; letter-spacing: 0.04em; color: #9aa3b2; margin-top: 2px !important;}
+.nav-rail .nav-buttons button {width: 100%; justify-content: flex-start;}
+.nav-rail .history-panel {max-height: 320px; overflow-y: auto;}
+
+.main-area {gap: 10px !important;}
+.panel {
+  background: #171b27;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  padding: 8px 10px !important;
+  gap: 8px !important;
+}
+
+.kpi-strip {gap: 8px !important;}
+.kpi-card {background: #141824; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 10px 12px !important; min-height: 72px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);}
+.kpi-card h4 {margin: 0 0 4px 0 !important; font-size: 13px !important; color: #9aa3b2;}
+.kpi-card p {margin: 0 !important; font-size: 18px !important; color: #e6e9ef; font-weight: 700;}
+
+.workflow-panel textarea,
+.workflow-panel input,
+.workflow-panel .gr-textbox textarea {
+  min-height: 90px;
 }
 
 .hero-input input,
 .hero-input textarea {
-  border-radius: 14px;
-  border: 1px solid #232834;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
   background: #0f1117;
-  color: #e8ebf1;
-  font-size: 18px;
-  padding: 10px 12px;
+  color: #e6e9ef;
+  font-size: 16px;
+  padding: 8px 10px;
   margin: 0 !important;
+  min-height: 70px;
 }
 
-.hero-actions {
-  align-items: center !important;
-  gap: 6px !important;
-  margin: 2px 0 0 !important;
-  padding: 0 !important;
-}
-
-button.primary {background: linear-gradient(135deg, #4b82f7, #8a6bff); color: #fff; border-radius: 12px; border: none;}
-button, .btn {color: #f5f7ff !important; font-weight: 600;}
-button.ghost {background: #1d2330; border: 1px solid #4a5770; color: #f5f7ff; border-radius: 10px;}
-button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
+.hero-actions {align-items: center !important; gap: 8px !important; margin: 0 !important; padding: 0 !important;}
+button.primary {background: linear-gradient(135deg, #1f9dd4, #3ec7f8); color: #0f1117; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08);}
+button, .btn {color: #e6e9ef !important; font-weight: 600; min-height: 38px !important;}
+button.ghost {background: transparent; border: 1px solid rgba(255,255,255,0.12); color: #e6e9ef; border-radius: 10px;}
+button.ghost:hover {background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.18);}
 .gr-button-primary:hover, button.primary:hover {filter: brightness(1.05);}
+
+.status {color: #9aa3b2; font-size: 13px; margin: 0 !important;}
 .session-table table {width: 100%;}
 .session-table td:last-child, .docs-table td:last-child {text-align: center; width: 56px;}
-.status {color: #9ea8c2; font-size: 13px; margin: 0 !important;}
 
 /* Chat transcript cleanup to remove phantom glyphs and excessive whitespace. */
 .chatbot {
   background: #0f1117;
-  border: 1px solid #1f232b;
-  border-radius: 12px;
-  padding: 4px 6px !important;
-  margin-top: 4px !important;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 10px;
+  padding: 6px 8px !important;
+  margin-top: 2px !important;
   box-shadow: none !important;
 }
 
@@ -933,7 +971,7 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
 #search-view .gr-chatbot .wrap {
   display: flex !important;
   flex-direction: column !important;
-  gap: 8px !important;
+  gap: 6px !important;
   padding: 0 !important;
   margin: 0 !important;
   align-items: stretch !important;
@@ -941,43 +979,25 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
   scroll-padding: 0 !important;
 }
 
-#search-view .gr-chatbot .wrap > div {
-  margin: 0 !important;
-  padding: 0 !important;
-}
+#search-view .gr-chatbot .wrap > div {margin: 0 !important; padding: 0 !important;}
 
-#search-view .gr-chatbot .wrap > div:empty {
-  display: none !important;
-  min-height: 0 !important;
-}
+#search-view .gr-chatbot .wrap > div:empty {display: none !important; min-height: 0 !important;}
 
 #search-view .gr-chatbot .message {
   margin: 0 !important;
-  padding: 10px 14px !important;
-  border-radius: 12px !important;
-  background: #151821 !important;
-  border: 1px solid #1f232b !important;
+  padding: 10px 12px !important;
+  border-radius: 10px !important;
+  background: #171b27 !important;
+  border: 1px solid rgba(255,255,255,0.06) !important;
   box-shadow: none !important;
   text-align: left !important;
 }
 
-#search-view .gr-chatbot .message * {
-  margin: 0 !important;
-  padding: 0 !important;
-}
+#search-view .gr-chatbot .message * {margin: 0 !important; padding: 0 !important;}
 
 #search-view .gr-chatbot .message,
 #search-view .gr-chatbot .message * {
-  /*
-   * Gradio occasionally injects decorative quote glyphs via pseudo-elements
-   * around chat messages. These markers wrap user prompts with pipes similar
-   * to the screenshot provided by the user. To keep prompts readable and
-   * standards-compliant, explicitly clear pseudo content and any implicit
-   * quote styling on both the message wrapper and its children. The
-   * !important declarations ensure the override wins against inline styles
-   * injected by the framework, providing reliable, verbose control over the
-   * rendered output.
-   */
+  /* Preserve clarity by neutralizing pseudo quote glyphs injected by the framework. */
   quotes: none !important;
 }
 
@@ -988,21 +1008,20 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
 #search-view .gr-chatbot .message blockquote::before,
 #search-view .gr-chatbot .message blockquote::after,
 #search-view .gr-chatbot .message q::before,
-#search-view .gr-chatbot .message q::after {
-  content: none !important;
-  display: none !important;
-}
+#search-view .gr-chatbot .message q::after {content: none !important; display: none !important;}
 
 #search-view .gr-chatbot .message .avatar,
 #search-view .gr-chatbot .message .icon,
-#search-view .gr-chatbot .message [data-testid*="avatar"] {
-  display: none !important;
-}
+#search-view .gr-chatbot .message [data-testid*="avatar"] {display: none !important;}
 
-.card {padding: 10px; background: #0f1117; border: 1px solid #1f232b; border-radius: 12px;}
+.card {padding: 10px; background: #171b27; border: 1px solid rgba(255,255,255,0.06); border-radius: 10px;}
 .help-page {line-height: 1.6; color: #d9deeb;}
 
-@media (max-width: 960px){.layout-row{flex-direction:column;} .sidebar{max-width:100%; width:100%;}}
+@media (max-width: 900px){
+  .layout-row{flex-direction:column;}
+  .nav-rail{max-width:100%; width:100%;}
+  .header-bar{flex-direction:column; align-items:flex-start;}
+}
 """
 
 
@@ -1023,8 +1042,12 @@ def build_app() -> gr.Blocks:
         selected_doc_state = gr.State("")
 
         # ---------------------- Login Screen ----------------------
-        with gr.Column(visible=True, elem_classes=["panel"], elem_id="login-view") as login_view:
-            _safe_markdown("## Welcome to MQ RAG Search", elem_classes=["title"])
+        with gr.Column(
+            visible=True,
+            elem_classes=["panel", "login-card"],
+            elem_id="login-view",
+        ) as login_view:
+            _safe_markdown("## Welcome to MQ RAG Ops", elem_classes=["title"])
             _safe_markdown(
                 "Sign in to explore AI-assisted answers backed by your MQ knowledge base.",
                 elem_classes=["status"],
@@ -1037,87 +1060,162 @@ def build_app() -> gr.Blocks:
             login_error = _safe_markdown(visible=False, elem_classes=["status"], value="")
 
         # ---------------------- Workspace -------------------------
-        with gr.Row(visible=False, elem_id="workspace", elem_classes=["layout-row"]) as workspace:
-            # Sidebar
-            with gr.Column(elem_classes=["sidebar", "panel"], scale=3):
-                with gr.Row():
-                    _safe_markdown("### AI Search", elem_classes=["no-margin"])
+        with gr.Column(visible=False, elem_id="workspace", elem_classes=["dashboard"]) as workspace:
+            with gr.Row(elem_classes=["header-bar"]):
+                with gr.Row(elem_classes=["header-left"], scale=1):
+                    _safe_markdown("### MQ RAG Ops Dashboard", elem_classes=["no-margin"])
+                with gr.Row(elem_classes=["header-right"], scale=1):
+                    user_badge = _safe_markdown("", elem_classes=["badge"])
+                    role_badge = _safe_markdown("", elem_classes=["badge"])
+                    _safe_markdown("<span class='badge'>Environment: Prod</span>", elem_classes=[])
                     logout_btn = gr.Button("Logout", variant="secondary", elem_classes=["ghost"], scale=0)
-                with gr.Row():
-                    user_badge = _safe_markdown("", elem_classes=["status"])
-                    role_badge = _safe_markdown("", elem_classes=["status"])
-                session_meta = _safe_markdown("Session ready. Conversations persist automatically.", elem_classes=["status"])
-                manage_docs_btn = gr.Button("Manage Docs", elem_classes=["ghost"], variant="secondary")
-                help_btn = gr.Button("Help & FAQ", elem_classes=["ghost"], variant="secondary")
 
-            # Main content
-            with gr.Column(scale=9, elem_classes=["panel"], elem_id="main-content"):
-                with gr.Column(visible=True, elem_id="search-view") as search_view:
-                    _safe_markdown("### MQ AI Search", elem_classes=["title"])
-                    hero_query = gr.Textbox(
-                        label="Ask anything about MQ",
-                        placeholder="Search documentation, logs, or troubleshooting steps…",
-                        lines=2,
-                        elem_classes=["hero-input"],
+            with gr.Row(elem_classes=["body-row", "layout-row"]):
+                # Sidebar / nav rail
+                with gr.Column(elem_classes=["nav-rail"], scale=3):
+                    _safe_markdown("#### Navigation", elem_classes=["section-title"])
+                    with gr.Column(elem_classes=["nav-buttons"]):
+                        manage_docs_btn = gr.Button(
+                            "📄 Manage Docs", elem_classes=["ghost"], variant="secondary"
+                        )
+                        help_btn = gr.Button("❓ Help & FAQ", elem_classes=["ghost"], variant="secondary")
+                        _safe_markdown("", visible=False)  # spacer for alignment
+                    _safe_markdown("#### Session", elem_classes=["section-title"])
+                    session_status_card = _safe_markdown(
+                        "Session ready. Conversations persist automatically.",
+                        elem_classes=["status"],
                     )
-                    with gr.Row(elem_classes=["hero-actions"]):
-                        hero_clear_btn = gr.Button(
-                            "Clear",
-                            elem_classes=["ghost"],
-                            variant="secondary",
-                            scale=1,
+                    with gr.Column(elem_classes=["history-panel", "panel"]):
+                        _safe_markdown(
+                            "Minimal history list placeholder. Sessions update automatically for clarity.",
+                            elem_classes=["status"],
                         )
-                        hero_submit_btn = gr.Button(
-                            "Submit",
-                            elem_classes=["primary"],
-                            variant="primary",
-                            scale=1,
-                        )
-                    chatbot = gr.Chatbot(height=520, bubble_full_width=False, elem_classes=["chatbot"])
-                    with gr.Row():
-                        clear_btn = gr.Button("Clear", elem_classes=["ghost"], variant="secondary")
 
-                with gr.Column(visible=False, elem_id="manage-docs-view") as manage_docs_view:
-                    _safe_markdown("### Manage Docs", elem_classes=["title"])
-                    with gr.Row():
-                        back_to_search_from_docs = gr.Button(
-                            "Back to Search", elem_classes=["ghost"], variant="secondary"
-                        )
-                        docs_logout = gr.Button("Logout", elem_classes=["ghost"], variant="secondary")
-                    doc_status = _safe_markdown("Browse and manage ingested documents.", elem_classes=["status"])
-                    doc_search = gr.Textbox(
-                        label="Search documents",
-                        placeholder="Type to filter documents…",
-                    )
-                    doc_table = gr.Dataframe(
-                        headers=["Document", "Type", "Size", "Ingested", ""],
-                        datatype=["str", "str", "str", "str", "str"],
-                        row_count=(0, "dynamic"),
-                        col_count=5,
-                        value=[],
-                        interactive=True,
-                        wrap=True,
-                        elem_classes=["docs-table"],
-                    )
-                    delete_doc_btn = gr.Button(
-                        "Delete Document", variant="stop", elem_classes=["ghost"], interactive=False
-                    )
-                    with gr.Row():
-                        doc_upload = gr.File(
-                            label="Upload PDFs",
-                            file_count="multiple",
-                            file_types=[".pdf"],
-                            interactive=False,
-                        )
-                        ingest_btn = gr.Button("Ingest", elem_classes=["primary"], variant="primary", interactive=False)
-                    doc_overview = _safe_markdown("", elem_classes=["status"])
-                    admin_hint = _safe_markdown("", elem_classes=["status"])
+                # Main content
+                with gr.Column(scale=9, elem_classes=["main-area"], elem_id="main-content"):
+                    with gr.Column(visible=True, elem_id="search-view", elem_classes=["panel"]) as search_view:
+                        with gr.Row(elem_classes=["kpi-strip"]):
+                            kpi_sessions = _safe_markdown(
+                                "<div class='kpi-card'><h4>Active Session</h4><p>Live</p></div>",
+                                elem_classes=["kpi-card"],
+                            )
+                            kpi_docs = _safe_markdown(
+                                "<div class='kpi-card'><h4>Docs Indexed</h4><p>—</p></div>",
+                                elem_classes=["kpi-card"],
+                            )
+                            kpi_latency = _safe_markdown(
+                                "<div class='kpi-card'><h4>Last Response</h4><p>&lt;1s</p></div>",
+                                elem_classes=["kpi-card"],
+                            )
 
-                with gr.Column(visible=False, elem_id="help-view", elem_classes=["help-page"]) as help_view:
-                    _safe_markdown("## Help & Onboarding")
-                    back_to_search = gr.Button("Back to Search", elem_classes=["primary"], variant="primary")
-                    _safe_markdown(
-                        """
+                        with gr.Row(elem_classes=["workflow-panel"]):
+                            with gr.Column(scale=7, elem_classes=["panel"]):
+                                _safe_markdown("### Ask MQ", elem_classes=["title", "no-margin"])
+                                hero_query = gr.Textbox(
+                                    label="Ask anything about MQ",
+                                    placeholder="Search documentation, logs, or troubleshooting steps…",
+                                    lines=2,
+                                    elem_classes=["hero-input"],
+                                )
+                                with gr.Row(elem_classes=["hero-actions"]):
+                                    hero_clear_btn = gr.Button(
+                                        "Clear",
+                                        elem_classes=["ghost"],
+                                        variant="secondary",
+                                        scale=1,
+                                    )
+                                    hero_submit_btn = gr.Button(
+                                        "Submit",
+                                        elem_classes=["primary"],
+                                        variant="primary",
+                                        scale=1,
+                                    )
+
+                            with gr.Column(scale=5, elem_classes=["panel"]):
+                                _safe_markdown(
+                                    "#### Workflow Notes", elem_classes=["no-margin", "status"]
+                                )
+                                _safe_markdown(
+                                    "Tune your prompt and submit for contextual answers. Clear will reset the input while retaining the session.",
+                                    elem_classes=["status"],
+                                )
+                                clear_btn = gr.Button("Reset Session", elem_classes=["ghost"], variant="secondary")
+
+                        with gr.Row(elem_classes=["result-grid"]):
+                            with gr.Column(scale=7):
+                                with gr.Tabs(elem_classes=["panel", "result-tabs"]):
+                                    with gr.Tab("Answer"):
+                                        chatbot = gr.Chatbot(
+                                            height=420, bubble_full_width=False, elem_classes=["chatbot"]
+                                        )
+                                    with gr.Tab("Sources"):
+                                        _safe_markdown(
+                                            "Evidence and citations will be summarized here when available.",
+                                            elem_classes=["status"],
+                                        )
+                                    with gr.Tab("Logs"):
+                                        _safe_markdown(
+                                            "Streaming diagnostics appear here during long-running operations.",
+                                            elem_classes=["status"],
+                                        )
+
+                            with gr.Column(scale=5):
+                                with gr.Accordion("Session Diagnostics", open=True, elem_classes=["panel"]):
+                                    _safe_markdown(
+                                        "Monitor the state of your conversation, environment, and document coverage.",
+                                        elem_classes=["status"],
+                                    )
+                                    session_meta = _safe_markdown("", elem_classes=["status"])
+
+                    with gr.Column(visible=False, elem_id="manage-docs-view", elem_classes=["panel"]) as manage_docs_view:
+                        with gr.Row():
+                            _safe_markdown("### Manage Docs", elem_classes=["title", "no-margin"])
+                            back_to_search_from_docs = gr.Button(
+                                "Back to Search", elem_classes=["ghost"], variant="secondary"
+                            )
+                            docs_logout = gr.Button("Logout", elem_classes=["ghost"], variant="secondary")
+                        with gr.Row():
+                            doc_status = _safe_markdown(
+                                "Browse and manage ingested documents.", elem_classes=["status"]
+                            )
+                            admin_hint = _safe_markdown("", elem_classes=["status"])
+                        with gr.Row():
+                            doc_search = gr.Textbox(
+                                label="Search documents",
+                                placeholder="Type to filter documents…",
+                            )
+                            delete_doc_btn = gr.Button(
+                                "Delete Document", variant="stop", elem_classes=["ghost"], interactive=False
+                            )
+                        with gr.Row():
+                            doc_table = gr.Dataframe(
+                                headers=["Document", "Type", "Size", "Ingested", ""],
+                                datatype=["str", "str", "str", "str", "str"],
+                                row_count=(0, "dynamic"),
+                                col_count=5,
+                                value=[],
+                                interactive=True,
+                                wrap=True,
+                                elem_classes=["docs-table"],
+                            )
+                        with gr.Row():
+                            doc_upload = gr.File(
+                                label="Upload PDFs",
+                                file_count="multiple",
+                                file_types=[".pdf"],
+                                interactive=False,
+                            )
+                            ingest_btn = gr.Button(
+                                "Ingest", elem_classes=["primary"], variant="primary", interactive=False
+                            )
+                        doc_overview = _safe_markdown("", elem_classes=["status"])
+
+                    with gr.Column(visible=False, elem_id="help-view", elem_classes=["panel", "help-page"]) as help_view:
+                        with gr.Row():
+                            _safe_markdown("## Help & Onboarding", elem_classes=["no-margin"])
+                            back_to_search = gr.Button("Back to Search", elem_classes=["primary"], variant="primary")
+                        _safe_markdown(
+                            """
 **Overview**
 
 Use this app to perform AI-powered search across your MQ knowledge base. Authenticate to access personalized sessions and document management.
@@ -1142,8 +1240,8 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 - Upload errors? Confirm PDF format and file size limits.
 - Need more help? Contact your platform administrator.
                         """,
-                        elem_classes=["help-page"],
-                    )
+                            elem_classes=["help-page"],
+                        )
 
         # ---------------------- Wiring ----------------------------
 
