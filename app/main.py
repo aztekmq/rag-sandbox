@@ -1018,13 +1018,11 @@ def build_app() -> gr.Blocks:
                             "📄",
                             elem_classes=["ghost"],
                             variant="secondary",
-                            tooltip="Manage documents",
                         )
                         help_btn = gr.Button(
                             "❓",
                             elem_classes=["ghost"],
                             variant="secondary",
-                            tooltip="Help & FAQ",
                         )
                         _safe_markdown("", visible=False)  # spacer for alignment
 
