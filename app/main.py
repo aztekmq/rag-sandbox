@@ -1028,25 +1028,34 @@ def build_app() -> gr.Blocks:
 
                 # Main content
                 with gr.Column(scale=9, elem_classes=["main-area"], elem_id="main-content"):
-                    with gr.Row(elem_classes=["identity-row"]):
-                        user_badge = _safe_markdown("", elem_classes=["badge", "light-badge"])
-                        role_badge = _safe_markdown("", elem_classes=["badge", "light-badge"])
-                        _safe_markdown("<span class='badge'>Environment: Prod</span>", elem_classes=[])
-                        logout_btn = gr.Button(
-                            "Logout", variant="secondary", elem_classes=["ghost"], scale=0
-                        )
-
-                    # Hero framing mimics the reference assistant layout while keeping backend hooks unchanged.
-                    plan_badge = _safe_markdown(
-                        "<span class='badge plan-pill'>Free plan · Upgrade</span>",
-                        elem_classes=[],
-                    )
-                    greeting_title = _safe_markdown(
-                        "✺ Good morning, friend", elem_classes=["greeting-title"]
-                    )
-                    greeting_subtitle = _safe_markdown(
-                        "How can I help you today?", elem_classes=["greeting-subtitle"]
-                    )
+                    with gr.Row(elem_classes=["header-row"]):
+                        with gr.Column(scale=10, elem_classes=["header-content"]):
+                            _safe_markdown("✺", elem_classes=["header-glyph"])
+                            greeting_title = _safe_markdown(
+                                "Good morning, admin", elem_classes=["greeting-title"]
+                            )
+                            greeting_subtitle = _safe_markdown(
+                                "How can I help you today?", elem_classes=["greeting-subtitle"]
+                            )
+                            with gr.Row(elem_classes=["badge-row"]):
+                                user_badge = _safe_markdown(
+                                    "", elem_classes=["badge", "light-badge"]
+                                )
+                                role_badge = _safe_markdown(
+                                    "", elem_classes=["badge", "light-badge"]
+                                )
+                                _safe_markdown(
+                                    "<span class='badge light-badge'>Environment: Prod</span>",
+                                    elem_classes=[],
+                                )
+                                plan_badge = _safe_markdown(
+                                    "<span class='badge plan-pill'>Free plan · Upgrade</span>",
+                                    elem_classes=[],
+                                )
+                        with gr.Column(scale=2, elem_classes=["header-actions"]):
+                            logout_btn = gr.Button(
+                                "Logout", variant="secondary", elem_classes=["ghost"], scale=0
+                            )
 
                     with gr.Column(
                         visible=True, elem_id="search-view", elem_classes=["panel", "conversation-card"]
@@ -1063,26 +1072,30 @@ def build_app() -> gr.Blocks:
                                 "＋ · 📎 · 📷 · α",
                                 elem_classes=["status"],
                             )
-                            with gr.Row():
+                            _safe_markdown("", elem_classes=["status", "action-spacer"])
+
+                        with gr.Row(elem_classes=["action-row"]):
+                            with gr.Column(scale=1, elem_classes=["action-slot", "align-start"]):
+                                clear_btn = gr.Button(
+                                    "Reset Session",
+                                    elem_classes=["ghost"],
+                                    variant="secondary",
+                                    scale=0,
+                                )
+                            with gr.Column(scale=1, elem_classes=["action-slot", "align-center"]):
                                 hero_clear_btn = gr.Button(
                                     "Clear",
                                     elem_classes=["ghost"],
                                     variant="secondary",
                                     scale=1,
                                 )
+                            with gr.Column(scale=1, elem_classes=["action-slot", "align-end"]):
                                 hero_submit_btn = gr.Button(
                                     "Submit",
                                     elem_classes=["primary"],
                                     variant="primary",
                                     scale=1,
                                 )
-
-                        clear_btn = gr.Button(
-                            "Reset Session",
-                            elem_classes=["ghost"],
-                            variant="secondary",
-                            scale=0,
-                        )
 
                         with gr.Row(elem_classes=["kpi-strip"]):
                             kpi_sessions = _safe_markdown(
