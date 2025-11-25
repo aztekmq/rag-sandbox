@@ -11,6 +11,7 @@ deployments.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -159,6 +160,61 @@ class RagEngine:
         """Estimate decode throughput using history or a defensive default."""
 
         return self._safe_average(self.decode_tps_history, default=15.0)
+
+    # ------------------------------------------------------------------
+    # Response sanitation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _dedupe_repeated_sentences(text: str, tail_window: int = 8) -> str:
+        """Remove repeated sentences from the tail of a model response.
+
+        Some generations can fall into polite-signoff loops (e.g., "I'll be happy
+        to help" repeated many times). To keep answers crisp, this helper looks
+        at the final ``tail_window`` sentences and drops duplicates while
+        preserving earlier content. Verbose logging surfaces when trimming
+        occurs so operators can correlate output changes with model behavior.
+
+        Args:
+            text: The raw model response accumulated so far.
+            tail_window: Number of trailing sentences to inspect for duplication.
+
+        Returns:
+            A string with redundant trailing sentences removed.
+        """
+
+        sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", text.strip())
+            if sentence.strip()
+        ]
+
+        if len(sentences) <= 1:
+            return text.strip()
+
+        cleaned: list[str] = []
+        seen_tail: set[str] = set()
+        total_removed = 0
+        tail_start = max(0, len(sentences) - tail_window)
+
+        for index, sentence in enumerate(sentences):
+            normalized = sentence.lower()
+            in_tail = index >= tail_start
+            if in_tail and normalized in seen_tail:
+                total_removed += 1
+                logger.info(
+                    "Omitted repeated sentence from response tail: %s", sentence
+                )
+                continue
+
+            cleaned.append(sentence)
+            if in_tail:
+                seen_tail.add(normalized)
+
+        if total_removed:
+            logger.info("Trimmed %d repeated sentences from model response", total_removed)
+
+        return " ".join(cleaned).strip()
 
     # ------------------------------------------------------------------
     # Retrieval and generation
@@ -328,6 +384,7 @@ class RagEngine:
         for index, chunk in enumerate(decode_generator):
             token_text = chunk.get("choices", [{}])[0].get("text", "")
             partial_answer += token_text
+            partial_answer = self._dedupe_repeated_sentences(partial_answer)
             tokens_generated += 1
 
             if first_token_time is None:
@@ -404,8 +461,9 @@ class RagEngine:
         final_answer = ""
         for update in self.stream_query(question, top_k=top_k):
             final_answer = update.partial_answer or final_answer
-        logger.debug("Non-streaming query produced %d characters", len(final_answer))
-        return final_answer
+        cleaned = self._dedupe_repeated_sentences(final_answer)
+        logger.debug("Non-streaming query produced %d characters after cleanup", len(cleaned))
+        return cleaned
 
 
 _engine: RagEngine | None = None
