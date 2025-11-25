@@ -19,8 +19,15 @@ ENV FORCE_CMAKE=1
 # First install ONLY llama-cpp-python with full CPU optimization
 # This runs cmake + make under the hood with the flags above
 COPY requirements.txt .
-RUN pip install --no-cache-dir --verbose \
-    $(grep -i "llama-cpp-python" requirements.txt)
+
+# Use AVX2/FMA/F16C-optimized llama.cpp bindings to avoid scalar fallbacks that
+# cause multi-minute prefill times on modern CPUs. FORCE_CMAKE guarantees a
+# source build so the CMAKE_ARGS take effect even when prebuilt wheels exist.
+# Verbose logging remains enabled to align with the repository's debugging
+# posture and international documentation standards.
+ENV CMAKE_ARGS="-DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_F16C=on -DLLAMA_FMA=on -DCMAKE_BUILD_TYPE=Release"
+ENV FORCE_CMAKE=1
+RUN pip install --verbose --no-cache-dir -r requirements.txt
 
 # Now install the rest of the dependencies (much faster, no recompilation needed)
 RUN pip install --no-cache-dir --verbose -r requirements.txt

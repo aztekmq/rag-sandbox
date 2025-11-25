@@ -151,6 +151,15 @@ http://localhost:7860 once healthy.
 - User mode → `user` / `mquser2025`
 - Admin mode → `admin` / your password
 
+### CPU optimization (stop scalar llama.cpp builds)
+
+The Dockerfile now forces `llama-cpp-python` to compile from source with
+`AVX2`, `FMA`, and `F16C` enabled (`CMAKE_ARGS` + `FORCE_CMAKE=1`). This avoids
+the scalar fallback observed in some prebuilt wheels that can push prefill time
+for the 8B model above three minutes. If you rebuild locally and want to verify
+the optimized path, inspect the build logs for the enabled CPU features and keep
+`MODEL_THREADS` aligned with your host’s physical cores for best throughput.
+
 ## Manual Docker build (optional)
 ```bash
 docker build -t rag-sandbox .
