@@ -1062,9 +1062,9 @@ def build_app() -> gr.Blocks:
         # ---------------------- Workspace -------------------------
         with gr.Column(visible=False, elem_id="workspace", elem_classes=["dashboard"]) as workspace:
             with gr.Row(elem_classes=["header-bar"]):
-                with gr.Row(elem_classes=["header-left"], scale=1):
+                with gr.Column(elem_classes=["header-left"], scale=1):
                     _safe_markdown("### MQ RAG Ops Dashboard", elem_classes=["no-margin"])
-                with gr.Row(elem_classes=["header-right"], scale=1):
+                with gr.Column(elem_classes=["header-right"], scale=1):
                     user_badge = _safe_markdown("", elem_classes=["badge"])
                     role_badge = _safe_markdown("", elem_classes=["badge"])
                     _safe_markdown("<span class='badge'>Environment: Prod</span>", elem_classes=[])
