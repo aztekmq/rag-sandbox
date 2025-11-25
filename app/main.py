@@ -796,6 +796,8 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
             gr.update(visible=False),
             gr.update(value=""),
             gr.update(value=""),
+            gr.update(value="✺ Good morning, friend"),
+            gr.update(value="How can I help you today?"),
             "",
             [],
             "Session inactive. Log in to begin.",
@@ -836,6 +838,8 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         gr.update(visible=False),
         gr.update(value=safe_username),
         gr.update(value=role.title()),
+        gr.update(value=f"✺ Good morning, {safe_username}"),
+        gr.update(value="How can I help you today?"),
         sessions[0],
         sessions[1],
         sessions[2],
@@ -872,6 +876,8 @@ def logout(state: AppState) -> tuple:
         gr.update(visible=False),
         gr.update(value=""),
         gr.update(value=""),
+        gr.update(value="✺ Good morning, friend"),
+        gr.update(value="How can I help you today?"),
         "",
         [],
         "Session ready. Conversations persist automatically.",
@@ -1003,39 +1009,83 @@ def build_app() -> gr.Blocks:
 
         # ---------------------- Workspace -------------------------
         with gr.Column(visible=False, elem_id="workspace", elem_classes=["dashboard"]) as workspace:
-            with gr.Row(elem_classes=["header-bar"]):
-                with gr.Column(elem_classes=["header-left"], scale=1):
-                    _safe_markdown("### MQ RAG Ops Dashboard", elem_classes=["no-margin"])
-                with gr.Column(elem_classes=["header-right"], scale=1):
-                    user_badge = _safe_markdown("", elem_classes=["badge"])
-                    role_badge = _safe_markdown("", elem_classes=["badge"])
-                    _safe_markdown("<span class='badge'>Environment: Prod</span>", elem_classes=[])
-                    logout_btn = gr.Button("Logout", variant="secondary", elem_classes=["ghost"], scale=0)
-
-            with gr.Row(elem_classes=["body-row", "layout-row"]):
+            with gr.Row(elem_classes=["body-row", "layout-row", "app-grid"]):
                 # Sidebar / nav rail
-                with gr.Column(elem_classes=["nav-rail"], scale=3):
+                with gr.Column(elem_classes=["nav-rail"], scale=1):
                     _safe_markdown("#### Navigation", elem_classes=["section-title"])
                     with gr.Column(elem_classes=["nav-buttons"]):
                         manage_docs_btn = gr.Button(
-                            "📄 Manage Docs", elem_classes=["ghost"], variant="secondary"
+                            "📄",
+                            elem_classes=["ghost"],
+                            variant="secondary",
+                            tooltip="Manage documents",
                         )
-                        help_btn = gr.Button("❓ Help & FAQ", elem_classes=["ghost"], variant="secondary")
+                        help_btn = gr.Button(
+                            "❓",
+                            elem_classes=["ghost"],
+                            variant="secondary",
+                            tooltip="Help & FAQ",
+                        )
                         _safe_markdown("", visible=False)  # spacer for alignment
-                    _safe_markdown("#### Session", elem_classes=["section-title"])
-                    session_status_card = _safe_markdown(
-                        "Active session stays synced; history saves automatically.",
-                        elem_classes=["status"],
-                    )
-                    with gr.Column(elem_classes=["history-panel", "panel"]):
-                        _safe_markdown(
-                            "Conversation turns will list here after you start chatting. The current session autosaves for reuse.",
-                            elem_classes=["status"],
-                        )
 
                 # Main content
                 with gr.Column(scale=9, elem_classes=["main-area"], elem_id="main-content"):
-                    with gr.Column(visible=True, elem_id="search-view", elem_classes=["panel"]) as search_view:
+                    with gr.Row(elem_classes=["identity-row"]):
+                        user_badge = _safe_markdown("", elem_classes=["badge", "light-badge"])
+                        role_badge = _safe_markdown("", elem_classes=["badge", "light-badge"])
+                        _safe_markdown("<span class='badge'>Environment: Prod</span>", elem_classes=[])
+                        logout_btn = gr.Button(
+                            "Logout", variant="secondary", elem_classes=["ghost"], scale=0
+                        )
+
+                    # Hero framing mimics the reference assistant layout while keeping backend hooks unchanged.
+                    plan_badge = _safe_markdown(
+                        "<span class='badge plan-pill'>Free plan · Upgrade</span>",
+                        elem_classes=[],
+                    )
+                    greeting_title = _safe_markdown(
+                        "✺ Good morning, friend", elem_classes=["greeting-title"]
+                    )
+                    greeting_subtitle = _safe_markdown(
+                        "How can I help you today?", elem_classes=["greeting-subtitle"]
+                    )
+
+                    with gr.Column(
+                        visible=True, elem_id="search-view", elem_classes=["panel", "conversation-card"]
+                    ) as search_view:
+                        with gr.Row(elem_classes=["workflow-panel"]):
+                            hero_query = gr.Textbox(
+                                label="",
+                                placeholder="Ask anything about MQ — documentation, logs, or troubleshooting steps…",
+                                lines=2,
+                                elem_classes=["hero-input"],
+                            )
+                        with gr.Row(elem_classes=["hero-actions"]):
+                            _safe_markdown(
+                                "＋ · 📎 · 📷 · α",
+                                elem_classes=["status"],
+                            )
+                            with gr.Row():
+                                hero_clear_btn = gr.Button(
+                                    "Clear",
+                                    elem_classes=["ghost"],
+                                    variant="secondary",
+                                    scale=1,
+                                )
+                                hero_submit_btn = gr.Button(
+                                    "Submit",
+                                    elem_classes=["primary"],
+                                    variant="primary",
+                                    scale=1,
+                                )
+
+                        clear_btn = gr.Button(
+                            "Reset Session",
+                            elem_classes=["ghost"],
+                            variant="secondary",
+                            scale=0,
+                        )
+
                         with gr.Row(elem_classes=["kpi-strip"]):
                             kpi_sessions = _safe_markdown(
                                 initial_kpi_sessions,
@@ -1049,39 +1099,6 @@ def build_app() -> gr.Blocks:
                                 initial_kpi_latency,
                                 elem_classes=["kpi-card"],
                             )
-
-                        with gr.Row(elem_classes=["workflow-panel"]):
-                            with gr.Column(scale=7, elem_classes=["panel"]):
-                                _safe_markdown("### Ask MQ", elem_classes=["title", "no-margin"])
-                                hero_query = gr.Textbox(
-                                    label="Ask anything about MQ",
-                                    placeholder="Search documentation, logs, or troubleshooting steps…",
-                                    lines=2,
-                                    elem_classes=["hero-input"],
-                                )
-                                with gr.Row(elem_classes=["hero-actions"]):
-                                    hero_clear_btn = gr.Button(
-                                        "Clear",
-                                        elem_classes=["ghost"],
-                                        variant="secondary",
-                                        scale=1,
-                                    )
-                                    hero_submit_btn = gr.Button(
-                                        "Submit",
-                                        elem_classes=["primary"],
-                                        variant="primary",
-                                        scale=1,
-                                    )
-
-                            with gr.Column(scale=5, elem_classes=["panel"]):
-                                _safe_markdown(
-                                    "#### Workflow Notes", elem_classes=["no-margin", "status"]
-                                )
-                                _safe_markdown(
-                                    "Submit to stream contextual answers with citations when available. Reset clears chat content while keeping the active session ready for reuse.",
-                                    elem_classes=["status"],
-                                )
-                                clear_btn = gr.Button("Reset Session", elem_classes=["ghost"], variant="secondary")
 
                         with gr.Tabs(elem_classes=["panel", "result-tabs"]):
                             with gr.Tab("Answer"):
@@ -1199,6 +1216,8 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 manage_docs_view,
                 user_badge,
                 role_badge,
+                greeting_title,
+                greeting_subtitle,
                 session_state,
                 chatbot,
                 session_meta,
@@ -1235,6 +1254,8 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 manage_docs_view,
                 user_badge,
                 role_badge,
+                greeting_title,
+                greeting_subtitle,
                 session_state,
                 chatbot,
                 session_meta,
@@ -1372,6 +1393,8 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 manage_docs_view,
                 user_badge,
                 role_badge,
+                greeting_title,
+                greeting_subtitle,
                 session_state,
                 chatbot,
                 session_meta,
@@ -1404,6 +1427,8 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 manage_docs_view,
                 user_badge,
                 role_badge,
+                greeting_title,
+                greeting_subtitle,
                 session_state,
                 chatbot,
                 session_meta,
