@@ -346,6 +346,73 @@ def refresh_documents() -> list[str]:
     return docs
 
 
+def _render_kpi_card(title: str, value: str) -> str:
+    """Build standardized KPI card markup for consistent styling and logging."""
+
+    logger.debug("Rendering KPI card %s with value %s", title, value)
+    return f"<div class='kpi-card'><h4>{title}</h4><p>{value}</p></div>"
+
+
+def _render_active_session_kpi(state: AppState | None, session_id: str | None) -> str:
+    """Summarize the active session for KPI display, handling anonymous contexts."""
+
+    role = (state or {}).get("role") or ""
+    user = (state or {}).get("user") or ""
+
+    if not role or not user:
+        logger.info("Active session KPI requested without authenticated context; marking inactive")
+        return _render_kpi_card("Active Session", "Inactive")
+
+    record = _load_session(role, user, session_id)
+    turn_count = len(record.history)
+    value = f"{record.title} · {turn_count} turn{'s' if turn_count != 1 else ''}"
+    logger.info(
+        "Active session KPI hydrated for %s with %d turns", _session_key(role, user), turn_count
+    )
+    return _render_kpi_card("Active Session", value)
+
+
+def _render_docs_kpi(doc_count: int | None = None) -> str:
+    """Surface the current indexed document count for the KPI strip."""
+
+    count = doc_count if doc_count is not None else len(refresh_documents())
+    value = f"{count} indexed"
+    logger.info("Docs Indexed KPI updated to %d", count)
+    return _render_kpi_card("Docs Indexed", value)
+
+
+def _render_latency_kpi(last_response_seconds: float | None, status: str | None = None) -> str:
+    """Render the last-response KPI, optionally highlighting in-progress work."""
+
+    if status:
+        value = status
+    elif last_response_seconds is None:
+        value = "Awaiting query"
+    elif last_response_seconds < 1:
+        value = f"{last_response_seconds * 1000:.0f} ms"
+    else:
+        value = f"{last_response_seconds:.2f} s"
+
+    logger.info("Last Response KPI set to %s", value)
+    return _render_kpi_card("Last Response", value)
+
+
+def _render_kpis(
+    state: AppState | None,
+    session_id: str | None,
+    doc_count: int | None = None,
+    last_response_seconds: float | None = None,
+    latency_status: str | None = None,
+) -> tuple[str, str, str]:
+    """Bundle KPI renderers for streamlined callback returns."""
+
+    return (
+        _render_active_session_kpi(state, session_id),
+        _render_docs_kpi(doc_count),
+        _render_latency_kpi(last_response_seconds, latency_status),
+    )
+
+
 def _build_document_rows(filter_text: str | None = None, docs: list[str] | None = None) -> list[list[str]]:
     """Construct document table rows with lightweight metadata for display."""
 
@@ -372,8 +439,10 @@ def _build_document_rows(filter_text: str | None = None, docs: list[str] | None 
     return rows
 
 
-def refresh_library(status: str | None = None, filter_text: str | None = None) -> tuple[list[list[str]], str]:
-    """Return updated document table rows alongside a formatted overview."""
+def refresh_library(
+    status: str | None = None, filter_text: str | None = None
+) -> tuple[list[list[str]], str, int]:
+    """Return updated document table rows alongside a formatted overview and count."""
 
     docs = refresh_documents()
     overview = _render_library_overview(docs)
@@ -381,7 +450,7 @@ def refresh_library(status: str | None = None, filter_text: str | None = None) -
         overview = f"{status}\n\n{overview}"
 
     logger.debug("Library state prepared with %d documents", len(docs))
-    return _build_document_rows(filter_text, docs), overview
+    return _build_document_rows(filter_text, docs), overview, len(docs)
 
 
 def handle_delete(doc: str) -> str:
@@ -392,27 +461,27 @@ def handle_delete(doc: str) -> str:
     return delete_document(doc)
 
 
-def delete_and_refresh(doc: str) -> tuple[gr.update, str]:
-    """Delete a document and refresh the library snapshot for the UI."""
+def delete_and_refresh(doc: str) -> tuple[gr.update, str, str]:
+    """Delete a document and refresh the library snapshot for the UI with KPI update."""
 
     status = handle_delete(doc)
-    rows, overview = refresh_library(status)
-    return gr.update(value=rows), overview
+    rows, overview, doc_count = refresh_library(status)
+    return gr.update(value=rows), overview, _render_docs_kpi(doc_count)
 
 
-def ingest_and_refresh(files: list[gr.File | str | Path] | None) -> tuple[gr.update, str]:
-    """Upload PDFs, trigger indexing, and rehydrate the document dropdown."""
+def ingest_and_refresh(files: list[gr.File | str | Path] | None) -> tuple[gr.update, str, str]:
+    """Upload PDFs, trigger indexing, and rehydrate the document dropdown with KPI data."""
 
     status = upload_and_index(files)
-    rows, overview = refresh_library(status)
-    return gr.update(value=rows), overview
+    rows, overview, doc_count = refresh_library(status)
+    return gr.update(value=rows), overview, _render_docs_kpi(doc_count)
 
 
-def filter_documents(query: str | None) -> tuple[gr.update, str]:
-    """Filter the document grid with type-ahead search."""
+def filter_documents(query: str | None) -> tuple[gr.update, str, str]:
+    """Filter the document grid with type-ahead search and KPI refresh."""
 
-    rows, overview = refresh_library(filter_text=query)
-    return gr.update(value=rows), overview
+    rows, overview, doc_count = refresh_library(filter_text=query)
+    return gr.update(value=rows), overview, _render_docs_kpi(doc_count)
 
 
 def handle_document_action(
@@ -420,7 +489,7 @@ def handle_document_action(
     event: gr.SelectData | None = None,
     query: str | None = None,
     state: AppState | None = None,
-) -> tuple[gr.update, str, str]:
+) -> tuple[gr.update, str, str, str]:
     """React to document table clicks for selection or deletion."""
 
     if state is None:
@@ -440,7 +509,7 @@ def handle_document_action(
     rows = _build_document_rows(filter_text, docs)
     if not rows:
         logger.info("Document action invoked with no rows; returning overview only")
-        return gr.update(value=rows), _render_library_overview(docs), ""
+        return gr.update(value=rows), _render_library_overview(docs), _render_docs_kpi(len(docs)), ""
 
     target_index = max(0, min(row_index, len(rows) - 1))
     target_doc = rows[target_index][0]
@@ -455,17 +524,24 @@ def handle_document_action(
     if col_index == 4:
         if role != "admin":
             logger.warning("Non-admin attempted to delete document %s", target_doc)
-            return gr.update(value=rows), _render_library_overview(docs) + "\n\nAdmin-only delete.", target_doc
+            return (
+                gr.update(value=rows),
+                _render_library_overview(docs) + "\n\nAdmin-only delete.",
+                _render_docs_kpi(len(docs)),
+                target_doc,
+            )
 
         status = handle_delete(target_doc)
-        updated_rows, overview = refresh_library(status, filter_text)
-        return gr.update(value=updated_rows), overview, ""
+        updated_rows, overview, doc_count = refresh_library(status, filter_text)
+        return gr.update(value=updated_rows), overview, _render_docs_kpi(doc_count), ""
 
-    return gr.update(value=rows), _render_library_overview(docs), target_doc
+    return gr.update(value=rows), _render_library_overview(docs), _render_docs_kpi(len(docs)), target_doc
 
 
-def delete_selected_document(doc: str | None, query: str | None, state: AppState) -> tuple[gr.update, str, str]:
-    """Delete the chosen document when allowed, preserving logging fidelity."""
+def delete_selected_document(
+    doc: str | None, query: str | None, state: AppState
+) -> tuple[gr.update, str, str, str]:
+    """Delete the chosen document when allowed, preserving logging fidelity and KPIs."""
 
     role = state.get("role") or "user"
     filter_text = query or ""
@@ -474,17 +550,27 @@ def delete_selected_document(doc: str | None, query: str | None, state: AppState
 
     if not target_doc:
         logger.warning("Delete attempted without selecting a document")
-        rows, overview = refresh_library(filter_text=filter_text)
-        return gr.update(value=rows), overview + "\n\nSelect a document before deleting.", target_doc
+        rows, overview, doc_count = refresh_library(filter_text=filter_text)
+        return (
+            gr.update(value=rows),
+            overview + "\n\nSelect a document before deleting.",
+            _render_docs_kpi(doc_count),
+            target_doc,
+        )
 
     if role != "admin":
         logger.warning("Non-admin attempted to delete document %s", target_doc)
-        rows, overview = refresh_library(filter_text=filter_text)
-        return gr.update(value=rows), overview + "\n\nAdmin-only delete.", target_doc
+        rows, overview, doc_count = refresh_library(filter_text=filter_text)
+        return (
+            gr.update(value=rows),
+            overview + "\n\nAdmin-only delete.",
+            _render_docs_kpi(doc_count),
+            target_doc,
+        )
 
     status = handle_delete(target_doc)
-    updated_rows, overview = refresh_library(status, filter_text)
-    return gr.update(value=updated_rows), overview, ""
+    updated_rows, overview, doc_count = refresh_library(status, filter_text)
+    return gr.update(value=updated_rows), overview, _render_docs_kpi(doc_count), ""
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +610,9 @@ def clear_session_history(session_id: str, state: AppState) -> tuple:
     _persist_history(record.session_id, role, username, [])
     refreshed = _load_session(role, username, record.session_id)
     meta = _format_session_meta(refreshed)
-    return [], refreshed.session_id, meta
+    doc_count = len(refresh_documents())
+    kpi_sessions, kpi_docs, kpi_latency = _render_kpis(state, refreshed.session_id, doc_count, None)
+    return [], refreshed.session_id, meta, kpi_sessions, kpi_docs, kpi_latency
 
 
 def respond(
@@ -541,15 +629,23 @@ def respond(
     active_user = username or active_role
     record = _load_session(active_role, active_user, session_id)
 
+    doc_count = len(refresh_documents())
+
     if not sanitized:
         logger.warning("Empty prompt submitted for session %s", record.session_id)
         meta = _format_session_meta(record)
+        kpi_sessions, kpi_docs, kpi_latency = _render_kpis(
+            state, record.session_id, doc_count, None
+        )
         return (
             "",
             record.history,
             record.session_id,
             meta,
             gr.update(interactive=True),
+            kpi_sessions,
+            kpi_docs,
+            kpi_latency,
         )
 
     logger.info(
@@ -566,14 +662,16 @@ def respond(
     logger.debug("Streaming response for session %s initiated", record.session_id)
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
 
-    last_payload: tuple[tuple[tuple[str, str], ...], bool] | None = None
+    last_payload: tuple[
+        tuple[tuple[str, str], ...], bool, float | None, str | None
+    ] | None = None
 
-    def _emit_if_changed(interactive: bool):
-        """Yield a UI update only when the visible payload changes."""
+    def _emit_if_changed(interactive: bool, latency_seconds: float | None = None, latency_status: str | None = None):
+        """Yield a UI update only when the visible payload or KPI data changes."""
 
         nonlocal last_payload, meta
         snapshot = tuple(working_history)
-        payload_key = (snapshot, interactive)
+        payload_key = (snapshot, interactive, latency_seconds, latency_status)
 
         if payload_key == last_payload:
             logger.debug(
@@ -585,15 +683,25 @@ def respond(
         logger.debug(
             "Emitting UI update for session %s with %d conversation turns", record.session_id, len(snapshot)
         )
+        kpi_sessions, kpi_docs, kpi_latency = _render_kpis(
+            state,
+            record.session_id,
+            doc_count,
+            latency_seconds,
+            latency_status,
+        )
         yield (
             "",
             working_history,
             record.session_id,
             meta,
             gr.update(interactive=interactive),
+            kpi_sessions,
+            kpi_docs,
+            kpi_latency,
         )
 
-    yield from _emit_if_changed(interactive=False)
+    yield from _emit_if_changed(interactive=False, latency_status="Streaming…")
 
     for progress in stream_query_rag(sanitized):
         if progress.partial_answer:
@@ -612,14 +720,14 @@ def respond(
         logger.debug(
             "Streaming update for session %s: stage=%s", record.session_id, progress.stage
         )
-        yield from _emit_if_changed(interactive=False)
+        yield from _emit_if_changed(interactive=False, latency_status="Streaming…")
 
     elapsed = time.perf_counter() - active_start
     working_history[-1] = (sanitized, partial_answer)
     _persist_history(record.session_id, active_role, active_user, working_history)
     meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
     logger.info("Response for session %s completed in %.3f seconds", record.session_id, elapsed)
-    yield from _emit_if_changed(interactive=True)
+    yield from _emit_if_changed(interactive=True, latency_seconds=elapsed)
 
 
 def clear_query_input(current_value: str) -> str:
@@ -676,6 +784,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
     role = _detect_role(username, password)
     if not role:
         logger.warning("Login failed; keeping user on login page")
+        doc_count = len(refresh_documents())
         return (
             state,
             gr.update(value="Authentication failed.", visible=True),
@@ -690,6 +799,9 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
             "",
             [],
             "Session inactive. Log in to begin.",
+            _render_kpi_card("Active Session", "Inactive"),
+            _render_docs_kpi(doc_count),
+            _render_latency_kpi(None),
             gr.update(interactive=True),
             gr.update(value=""),
             gr.update(value=""),
@@ -710,8 +822,9 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         "session_id": "",
     }
     sessions = hydrate_sessions(role, safe_username)
-    doc_rows, doc_overview = refresh_library()
+    doc_rows, doc_overview, doc_count = refresh_library()
     logger.info("Login succeeded for %s; transitioning to search page", safe_username)
+    kpi_sessions, kpi_docs, kpi_latency = _render_kpis(new_state, sessions[0], doc_count, None)
     return (
         new_state,
         gr.update(value="Authenticated. Redirecting…", visible=True),
@@ -726,6 +839,9 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         sessions[0],
         sessions[1],
         sessions[2],
+        kpi_sessions,
+        kpi_docs,
+        kpi_latency,
         gr.update(interactive=True),
         gr.update(value=safe_username),
         gr.update(value=role),
@@ -744,6 +860,7 @@ def logout(state: AppState) -> tuple:
 
     logger.info("Logout requested for role: %s", state.get("role") or "unknown")
     cleared_state = _initial_state()
+    doc_count = len(refresh_documents())
     return (
         cleared_state,
         gr.update(value="Ready to sign in.", visible=False),
@@ -758,6 +875,9 @@ def logout(state: AppState) -> tuple:
         "",
         [],
         "Session ready. Conversations persist automatically.",
+        _render_kpi_card("Active Session", "Inactive"),
+        _render_docs_kpi(doc_count),
+        _render_latency_kpi(None),
         gr.update(interactive=True),
         gr.update(value=""),
         gr.update(value=""),
@@ -791,8 +911,9 @@ def configure_doc_tools(state: AppState) -> tuple:
     is_admin = state.get("role") == "admin"
     tooltip = "Full access" if is_admin else "Read-only for non-admins."
     logger.debug("Configuring manage docs view for %s", state.get("role") or "anonymous")
-    rows, overview = refresh_library()
+    rows, overview, doc_count = refresh_library()
     hint = overview + ("\n\nAdmin-only." if not is_admin else "")
+    logger.info("Manage Docs tools configured with %d indexed documents", doc_count)
     return (
         gr.update(interactive=is_admin),
         gr.update(interactive=is_admin),
@@ -808,7 +929,7 @@ def open_manage_docs(state: AppState) -> tuple:
 
     updated_state = _set_page(state, "manage_docs")
     is_admin = state.get("role") == "admin"
-    rows, overview = refresh_library()
+    rows, overview, doc_count = refresh_library()
     logger.info("Opening Manage Docs for %s", state.get("user") or "unknown user")
     return (
         updated_state,
@@ -857,6 +978,10 @@ def build_app() -> gr.Blocks:
         role_state = gr.State("")
         session_state = gr.State("")
         selected_doc_state = gr.State("")
+        initial_doc_count = len(refresh_documents())
+        initial_kpi_sessions = _render_kpi_card("Active Session", "Inactive")
+        initial_kpi_docs = _render_docs_kpi(initial_doc_count)
+        initial_kpi_latency = _render_latency_kpi(None)
 
         # ---------------------- Login Screen ----------------------
         with gr.Column(
@@ -913,15 +1038,15 @@ def build_app() -> gr.Blocks:
                     with gr.Column(visible=True, elem_id="search-view", elem_classes=["panel"]) as search_view:
                         with gr.Row(elem_classes=["kpi-strip"]):
                             kpi_sessions = _safe_markdown(
-                                "<div class='kpi-card'><h4>Active Session</h4><p>Live</p></div>",
+                                initial_kpi_sessions,
                                 elem_classes=["kpi-card"],
                             )
                             kpi_docs = _safe_markdown(
-                                "<div class='kpi-card'><h4>Docs Indexed</h4><p>—</p></div>",
+                                initial_kpi_docs,
                                 elem_classes=["kpi-card"],
                             )
                             kpi_latency = _safe_markdown(
-                                "<div class='kpi-card'><h4>Last Response</h4><p>&lt;1s</p></div>",
+                                initial_kpi_latency,
                                 elem_classes=["kpi-card"],
                             )
 
@@ -1077,6 +1202,9 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 session_state,
                 chatbot,
                 session_meta,
+                kpi_sessions,
+                kpi_docs,
+                kpi_latency,
                 hero_submit_btn,
                 user_state,
                 role_state,
@@ -1110,6 +1238,9 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 session_state,
                 chatbot,
                 session_meta,
+                kpi_sessions,
+                kpi_docs,
+                kpi_latency,
                 hero_submit_btn,
                 user_state,
                 role_state,
@@ -1133,6 +1264,9 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 session_state,
                 session_meta,
                 hero_submit_btn,
+                kpi_sessions,
+                kpi_docs,
+                kpi_latency,
             ],
         )
         hero_submit_btn.click(
@@ -1144,6 +1278,9 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 session_state,
                 session_meta,
                 hero_submit_btn,
+                kpi_sessions,
+                kpi_docs,
+                kpi_latency,
             ],
         )
         hero_clear_btn.click(
@@ -1155,7 +1292,7 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
         clear_btn.click(
             clear_session_history,
             inputs=[session_state, app_state],
-            outputs=[chatbot, session_state, session_meta],
+            outputs=[chatbot, session_state, session_meta, kpi_sessions, kpi_docs, kpi_latency],
             queue=False,
         )
 
@@ -1163,22 +1300,22 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
         ingest_btn.click(
             ingest_and_refresh,
             inputs=doc_upload,
-            outputs=[doc_table, doc_overview],
+            outputs=[doc_table, doc_overview, kpi_docs],
         )
         doc_search.change(
             filter_documents,
             inputs=doc_search,
-            outputs=[doc_table, doc_overview],
+            outputs=[doc_table, doc_overview, kpi_docs],
         )
         doc_table.select(
             handle_document_action,
             inputs=[doc_search, app_state],
-            outputs=[doc_table, doc_overview, selected_doc_state],
+            outputs=[doc_table, doc_overview, kpi_docs, selected_doc_state],
         )
         delete_doc_btn.click(
             delete_selected_document,
             inputs=[selected_doc_state, doc_search, app_state],
-            outputs=[doc_table, doc_overview, selected_doc_state],
+            outputs=[doc_table, doc_overview, kpi_docs, selected_doc_state],
             # Align with current Gradio event signatures to preserve confirmation
             # prompts without triggering keyword errors during interface setup.
             js="() => confirm('Delete this document?')",
@@ -1238,6 +1375,9 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 session_state,
                 chatbot,
                 session_meta,
+                kpi_sessions,
+                kpi_docs,
+                kpi_latency,
                 hero_submit_btn,
                 user_state,
                 role_state,
@@ -1267,6 +1407,9 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
                 session_state,
                 chatbot,
                 session_meta,
+                kpi_sessions,
+                kpi_docs,
+                kpi_latency,
                 hero_submit_btn,
                 user_state,
                 role_state,
