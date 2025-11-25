@@ -36,6 +36,9 @@ from app.rag_chain import (
 
 logger = logging.getLogger(__name__)
 
+ASSETS_DIR = Path(__file__).parent / "assets"
+CUSTOM_CSS_PATH = ASSETS_DIR / "custom.css"
+
 
 # ---------------------------------------------------------------------------
 # Compatibility patches
@@ -835,319 +838,8 @@ def return_to_search(state: AppState) -> tuple:
 # ---------------------------------------------------------------------------
 
 
-CUSTOM_CSS = """
-/* Apple-inspired corporate theme with high legibility on light surfaces. */
-:root {
-  --page-bg: #f5f5f7;
-  --surface: #ffffff;
-  --secondary: #fafafc;
-  --tertiary: #f2f2f7;
-  --border: #d2d2d7;
-  --text: #1d1d1f;
-  --muted: #6e6e73;
-  --accent: #0071e3;
-  --accent-hover: #0077ed;
-  --focus-ring: 0 0 0 3px rgba(0, 113, 227, 0.35);
-  --shadow: 0 6px 20px rgba(0, 0, 0, 0.06);
-  --radius-lg: 16px;
-  --radius-sm: 12px;
-}
+CUSTOM_CSS = CUSTOM_CSS_PATH.read_text(encoding="utf-8")
 
-body {
-  background: var(--page-bg);
-  color: var(--text);
-  font-family: "SF Pro Text", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-}
-
-.gradio-container {
-  width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 10px 12px !important;
-  gap: 10px !important;
-  background: transparent;
-}
-
-.gradio-container .block,
-.gradio-container .gr-block,
-.gradio-container .gr-form,
-.gradio-container .gr-panel,
-.gradio-container .gr-box,
-.gradio-container .form,
-.gradio-container .wrap {
-  margin: 4px 0 !important;
-  padding: 6px !important;
-  gap: 8px !important;
-  color: var(--text);
-}
-
-.gradio-container .row,
-.gradio-container .gr-row,
-.gradio-container .column,
-.gradio-container .gr-column {
-  gap: 10px !important;
-  margin: 4px 0 !important;
-}
-
-.dashboard {gap: 12px !important;}
-
-.header-bar {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 12px 14px !important;
-  align-items: center;
-  box-shadow: var(--shadow);
-}
-
-.header-left h3 {
-  margin: 0 !important;
-  font-size: 18px !important;
-  font-weight: 700 !important;
-  color: var(--text);
-}
-
-.header-right {justify-content: flex-end; gap: 10px !important;}
-
-.badge {
-  background: var(--tertiary);
-  color: var(--muted);
-  padding: 6px 10px;
-  border-radius: 10px;
-  font-size: 13px;
-  border: 1px solid var(--border);
-}
-
-.body-row {align-items: stretch; gap: 12px !important;}
-
-.nav-rail {
-  min-width: 240px;
-  max-width: 280px;
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 12px 12px 14px !important;
-  gap: 12px !important;
-  box-shadow: var(--shadow);
-}
-
-.nav-rail .section-title {
-  font-size: 13px;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  margin-top: 2px !important;
-  font-weight: 700;
-}
-
-.nav-rail .nav-buttons button {width: 100%; justify-content: flex-start;}
-.nav-rail .history-panel {max-height: 320px; overflow-y: auto;}
-
-.main-area {gap: 12px !important;}
-
-.panel {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-  padding: 12px 14px !important;
-  gap: 10px !important;
-}
-
-.kpi-strip {gap: 10px !important;}
-
-.kpi-card {
-  background: var(--secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 10px 12px !important;
-  min-height: 72px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), var(--shadow);
-}
-
-.kpi-card h4 {
-  margin: 0 0 4px 0 !important;
-  font-size: 13px !important;
-  color: var(--muted);
-  font-weight: 700;
-}
-
-.kpi-card p {
-  margin: 0 !important;
-  font-size: 18px !important;
-  color: var(--text);
-  font-weight: 700;
-}
-
-.workflow-panel textarea,
-.workflow-panel input,
-.workflow-panel .gr-textbox textarea {min-height: 90px;}
-
-.hero-input input,
-.hero-input textarea {
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: #fbfbfd;
-  color: var(--text);
-  font-size: 16px;
-  padding: 10px 12px;
-  margin: 0 !important;
-  min-height: 70px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
-}
-
-.hero-input textarea:focus,
-.hero-input input:focus,
-textarea:focus,
-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring);
-}
-
-.hero-actions {align-items: center !important; gap: 10px !important; margin: 0 !important; padding: 0 !important;}
-
-button,
-.btn {
-  color: var(--text) !important;
-  font-weight: 600;
-  min-height: 40px !important;
-  border-radius: var(--radius-sm) !important;
-}
-
-button.primary,
-.gr-button-primary {
-  background: var(--accent) !important;
-  color: #ffffff !important;
-  border: 1px solid var(--accent) !important;
-  box-shadow: var(--shadow);
-}
-
-button.primary:hover,
-.gr-button-primary:hover {background: var(--accent-hover) !important;}
-
-button.primary:focus-visible,
-.gr-button-primary:focus-visible {box-shadow: var(--focus-ring) !important;}
-
-button.ghost,
-.gr-button-secondary,
-button.secondary {
-  background: var(--surface) !important;
-  border: 1px solid var(--border) !important;
-  color: var(--text) !important;
-}
-
-button.ghost:hover,
-.gr-button-secondary:hover,
-button.secondary:hover {background: var(--secondary) !important;}
-
-.status {
-  color: var(--muted);
-  font-size: 13px;
-  margin: 0 !important;
-}
-
-.session-table table {width: 100%;}
-.session-table td:last-child, .docs-table td:last-child {text-align: center; width: 56px;}
-
-.chatbot {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 8px 10px !important;
-  margin-top: 2px !important;
-  box-shadow: var(--shadow) !important;
-}
-
-#search-view .gr-chatbot,
-#search-view .gr-chatbot > div {
-  margin: 0 !important;
-  padding: 0 !important;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-#search-view .gr-chatbot .wrap {
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 8px !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  align-items: stretch !important;
-  min-height: 0 !important;
-  scroll-padding: 0 !important;
-}
-
-#search-view .gr-chatbot .wrap > div {margin: 0 !important; padding: 0 !important;}
-#search-view .gr-chatbot .wrap > div:empty {display: none !important; min-height: 0 !important;}
-
-#search-view .gr-chatbot .message {
-  margin: 0 !important;
-  padding: 12px 14px !important;
-  border-radius: var(--radius-lg) !important;
-  background: var(--secondary) !important;
-  border: 1px solid var(--border) !important;
-  box-shadow: none !important;
-  text-align: left !important;
-  color: var(--text) !important;
-}
-
-#search-view .gr-chatbot .message * {margin: 0 !important; padding: 0 !important; color: inherit;}
-
-#search-view .gr-chatbot .message,
-#search-view .gr-chatbot .message * {
-  quotes: none !important;
-}
-
-#search-view .gr-chatbot .message::before,
-#search-view .gr-chatbot .message::after,
-#search-view .gr-chatbot .message *::before,
-#search-view .gr-chatbot .message *::after,
-#search-view .gr-chatbot .message blockquote::before,
-#search-view .gr-chatbot .message blockquote::after,
-#search-view .gr-chatbot .message q::before,
-#search-view .gr-chatbot .message q::after {content: none !important; display: none !important;}
-
-#search-view .gr-chatbot .message .avatar,
-#search-view .gr-chatbot .message .icon,
-#search-view .gr-chatbot .message [data-testid*="avatar"] {display: none !important;}
-
-.card {
-  padding: 10px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow);
-}
-
-.help-page {line-height: 1.6; color: var(--text);}
-
-.tabs, .tabitem, .tabitem > * {
-  background: transparent !important;
-  color: var(--text) !important;
-}
-
-.gr-tabs .tab-nav button {
-  color: var(--muted) !important;
-  border-radius: var(--radius-sm) !important;
-  border: 1px solid transparent !important;
-}
-
-.gr-tabs .tab-nav button[aria-selected="true"] {
-  background: var(--secondary) !important;
-  color: var(--text) !important;
-  border-color: var(--border) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
-}
-
-.prose * {color: var(--text) !important;}
-
-@media (max-width: 900px){
-  .layout-row{flex-direction:column;}
-  .nav-rail{max-width:100%; width:100%;}
-  .header-bar{flex-direction:column; align-items:flex-start;}
-}
-"""
 
 
 def build_app() -> gr.Blocks:
@@ -1207,12 +899,12 @@ def build_app() -> gr.Blocks:
                         _safe_markdown("", visible=False)  # spacer for alignment
                     _safe_markdown("#### Session", elem_classes=["section-title"])
                     session_status_card = _safe_markdown(
-                        "Session ready. Conversations persist automatically.",
+                        "Active session stays synced; history saves automatically.",
                         elem_classes=["status"],
                     )
                     with gr.Column(elem_classes=["history-panel", "panel"]):
                         _safe_markdown(
-                            "Minimal history list placeholder. Sessions update automatically for clarity.",
+                            "Conversation turns will list here after you start chatting. The current session autosaves for reuse.",
                             elem_classes=["status"],
                         )
 
@@ -1261,36 +953,32 @@ def build_app() -> gr.Blocks:
                                     "#### Workflow Notes", elem_classes=["no-margin", "status"]
                                 )
                                 _safe_markdown(
-                                    "Tune your prompt and submit for contextual answers. Clear will reset the input while retaining the session.",
+                                    "Submit to stream contextual answers with citations when available. Reset clears chat content while keeping the active session ready for reuse.",
                                     elem_classes=["status"],
                                 )
                                 clear_btn = gr.Button("Reset Session", elem_classes=["ghost"], variant="secondary")
 
-                        with gr.Row(elem_classes=["result-grid"]):
-                            with gr.Column(scale=7):
-                                with gr.Tabs(elem_classes=["panel", "result-tabs"]):
-                                    with gr.Tab("Answer"):
-                                        chatbot = gr.Chatbot(
-                                            height=420, bubble_full_width=False, elem_classes=["chatbot"]
-                                        )
-                                    with gr.Tab("Sources"):
-                                        _safe_markdown(
-                                            "Evidence and citations will be summarized here when available.",
-                                            elem_classes=["status"],
-                                        )
-                                    with gr.Tab("Logs"):
-                                        _safe_markdown(
-                                            "Streaming diagnostics appear here during long-running operations.",
-                                            elem_classes=["status"],
-                                        )
-
-                            with gr.Column(scale=5):
-                                with gr.Accordion("Session Diagnostics", open=True, elem_classes=["panel"]):
-                                    _safe_markdown(
-                                        "Monitor the state of your conversation, environment, and document coverage.",
-                                        elem_classes=["status"],
-                                    )
-                                    session_meta = _safe_markdown("", elem_classes=["status"])
+                        with gr.Tabs(elem_classes=["panel", "result-tabs"]):
+                            with gr.Tab("Answer"):
+                                chatbot = gr.Chatbot(
+                                    height=420, bubble_full_width=False, elem_classes=["chatbot"]
+                                )
+                            with gr.Tab("Sources"):
+                                _safe_markdown(
+                                    "Matched documents and citations will summarize here after each retrieval step.",
+                                    elem_classes=["status"],
+                                )
+                            with gr.Tab("Logs"):
+                                _safe_markdown(
+                                    "Streaming diagnostics appear here during long-running operations to aid debugging.",
+                                    elem_classes=["status"],
+                                )
+                            with gr.Tab("Raw"):
+                                _safe_markdown(
+                                    "Session diagnostics stay in sync for audit trails and export without altering backend callbacks.",
+                                    elem_classes=["status"],
+                                )
+                                session_meta = _safe_markdown("", elem_classes=["status"])
 
                     with gr.Column(visible=False, elem_id="manage-docs-view", elem_classes=["panel"]) as manage_docs_view:
                         with gr.Row():
@@ -1343,28 +1031,25 @@ def build_app() -> gr.Blocks:
                             """
 **Overview**
 
-Use this app to perform AI-powered search across your MQ knowledge base. Authenticate to access personalized sessions and document management.
+Use this app to perform AI-powered search across your MQ knowledge base once you sign in. Sessions stay tied to your role and user profile.
 
- **Running a search**
- - Enter a query in the large search bar and press Enter.
- - The assistant responds with contextual answers and cites past turns.
- The assistant responds with contextual answers and cites past turns.
+**Running a search**
+- Enter a query in the Ask MQ input and press Enter or Submit.
+- Responses stream into the Answer tab with citations when available.
+- Use Reset Session to clear chat content without losing the current session slot.
 
 **Sessions**
-- Sessions persist automatically so you can return to them later without manual cleanup.
-- Use the Clear controls to reset history while staying in the same conversation.
+- History saves automatically per user and role so you can return later.
+- Clearing history removes turns while preserving session metadata for audits.
 
 **Manage Docs**
-- Use the Manage Docs view to ingest PDFs and review the knowledge base.
-- Administrators can upload, ingest, and delete documents feeding the RAG index.
-- Standard users can browse documents but cannot modify them.
+- Admins can ingest or delete PDFs that feed the RAG index; all users can browse what is available.
 
-**FAQ & Troubleshooting**
+**Troubleshooting**
 - If authentication fails, verify credentials and try again.
-- Slow responses? Check connectivity to the vector store and document index.
-- Upload errors? Confirm PDF format and file size limits.
-- Need more help? Contact your platform administrator.
-                        """,
+- Slow responses? Confirm connectivity to the vector store and document index.
+- Upload errors? Confirm PDF format and file size limits before retrying.
+                            """,
                             elem_classes=["help-page"],
                         )
 
