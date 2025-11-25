@@ -973,16 +973,23 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
    * around chat messages. These markers wrap user prompts with pipes similar
    * to the screenshot provided by the user. To keep prompts readable and
    * standards-compliant, explicitly clear pseudo content and any implicit
-   * quote styling on both the message wrapper and its children.
+   * quote styling on both the message wrapper and its children. The
+   * !important declarations ensure the override wins against inline styles
+   * injected by the framework, providing reliable, verbose control over the
+   * rendered output.
    */
-  quotes: "" "";
+  quotes: none !important;
 }
 
 #search-view .gr-chatbot .message::before,
 #search-view .gr-chatbot .message::after,
 #search-view .gr-chatbot .message *::before,
-#search-view .gr-chatbot .message *::after {
-  content: "" !important;
+#search-view .gr-chatbot .message *::after,
+#search-view .gr-chatbot .message blockquote::before,
+#search-view .gr-chatbot .message blockquote::after,
+#search-view .gr-chatbot .message q::before,
+#search-view .gr-chatbot .message q::after {
+  content: none !important;
   display: none !important;
 }
 
