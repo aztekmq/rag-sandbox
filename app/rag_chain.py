@@ -258,7 +258,7 @@ class RagEngine:
 
         logger.info("Model file %s passed GGUF validation", model_path)
 
-    def ingest(self, chunk_size: int = 1200, chunk_overlap: int = 200) -> str:
+    def ingest(self, chunk_size: int = 550, chunk_overlap: int = 100) -> str:
         pdf_paths = list(Path(PDF_DIR).glob("*.pdf"))
         logger.info("Starting ingestion for %d PDFs", len(pdf_paths))
         chunks, metadata = ingest_pdf_files(pdf_paths, chunk_size, chunk_overlap)
