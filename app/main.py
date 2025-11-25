@@ -508,7 +508,7 @@ def hydrate_sessions(role: str, username: str) -> tuple:
     record = _ensure_default_session(role, username)
     logger.info("Hydrating sessions for %s", _session_key(role, username))
     meta = _format_session_meta(record)
-    return record.session_id, record.history, meta, "Response time: --"
+    return record.session_id, record.history, meta
 
 
 def clear_session_history(session_id: str, state: AppState) -> tuple:
@@ -521,101 +521,7 @@ def clear_session_history(session_id: str, state: AppState) -> tuple:
     _persist_history(record.session_id, role, username, [])
     refreshed = _load_session(role, username, record.session_id)
     meta = _format_session_meta(refreshed)
-    return [], "Response time: --", refreshed.session_id, meta
-
-
-def _format_eta_status(progress: GenerationProgress) -> str:
-    """Human-friendly status messaging for live ETA telemetry."""
-
-    if progress.stage == "error":
-        return progress.detail or "The RAG engine is unavailable."
-
-    if progress.stage == "retrieval":
-        retrieval_text = (
-            f"Retrieval: {progress.retrieval_seconds:.2f}s" if progress.retrieval_seconds else "Retrieval pending"
-        )
-        prefill_hint = (
-            f" · Prefill ETA ~{progress.prefill_seconds:.1f}s" if progress.prefill_seconds else ""
-        )
-        return retrieval_text + prefill_hint
-
-    if progress.stage == "prefill_start":
-        return "Preparing model input from retrieved context."
-
-    if progress.stage == "prefill_complete":
-        return (
-            f"Prefill: {progress.prefill_seconds:.2f}s · Measuring token throughput for ETA."
-            if progress.prefill_seconds
-            else "Prefill completed. Measuring token throughput."
-        )
-
-    if progress.stage == "generation":
-        if progress.tokens_per_second:
-            remaining = (
-                f"≈{progress.eta_seconds:.1f}s remaining" if progress.eta_seconds is not None else "estimating remaining time"
-            )
-            return f"Generating… {progress.tokens_per_second:.2f} tok/s · {remaining}"
-        return "Generating… measuring token speed."
-
-    if progress.stage == "done":
-        retrieval = f"Retrieval: {progress.retrieval_seconds:.2f}s" if progress.retrieval_seconds else "Retrieval: --"
-        prefill = f"Prefill: {progress.prefill_seconds:.2f}s" if progress.prefill_seconds else "Prefill: --"
-        generation = (
-            f"Generation tokens: {progress.decode_tokens} @ {progress.tokens_per_second:.2f} tok/s"
-            if progress.tokens_per_second
-            else f"Generation tokens: {progress.decode_tokens}"
-        )
-        return f"{retrieval} · {prefill} · {generation}"
-
-    return progress.detail or "Working…"
-
-
-def _format_eta_label(progress: GenerationProgress) -> str:
-    """Compute a compact ETA label for the dedicated indicator widget."""
-
-    if progress.stage == "error":
-        return "ETA: --"
-
-    if progress.stage in {"retrieval", "prefill_start"}:
-        return ""
-
-    if progress.stage == "prefill_complete":
-        return "ETA: estimating…"
-
-    if progress.stage == "generation" and progress.eta_seconds is not None:
-        return f"ETA: ~{progress.eta_seconds:.1f}s"
-
-    if progress.stage == "done":
-        return "ETA: complete"
-
-    return ""
-
-
-def _stage_label(progress: GenerationProgress) -> str:
-    """Map backend stage codes to user-facing stage descriptions."""
-
-    if progress.stage == "retrieval":
-        return "Retrieving context…"
-    if progress.stage in {"prefill_start"}:
-        return ""
-    if progress.stage in {"prefill_complete", "generation"}:
-        return "Generating answer…"
-    if progress.stage == "done":
-        return "Finalizing…"
-    if progress.stage == "error":
-        return "Error"
-    return "Working…"
-
-
-def _format_elapsed_label(seconds: float | None) -> str:
-    """Return a clock-style elapsed label suitable for the UI."""
-
-    if seconds is None:
-        return "Elapsed: --"
-
-    minutes = int(seconds) // 60
-    remaining = seconds - (minutes * 60)
-    return f"Elapsed: {minutes:02d}:{remaining:04.1f}"
+    return [], refreshed.session_id, meta
 
 
 def respond(
@@ -624,16 +530,8 @@ def respond(
     state: AppState,
     session_id: str,
     username: str,
-    start_time: float | None,
 ):
-    """Generate a response using the RAG engine while streaming status updates.
-
-    The ``start_time`` parameter captures when the user initiated the
-    submission so telemetry labels (elapsed and ETA) remain consistent across
-    UI updates even when Gradio batches callbacks. This function intentionally
-    emits explicit updates for those indicators to keep the client-side display
-    authoritative and avoid stale browser-calculated guesses.
-    """
+    """Generate a response using the RAG engine while streaming chat updates only."""
 
     sanitized = (message or "").strip()
     active_role = state.get("role") or "user"
@@ -646,20 +544,15 @@ def respond(
         return (
             "",
             record.history,
-            "Please enter a prompt to continue.",
             record.session_id,
             meta,
-            "Ready to search.",
-            False,
-            gr.update(visible=False, value=""),
-            gr.update(value="Elapsed: --", visible=False),
-            gr.update(value="ETA: --", visible=False),
+            gr.update(interactive=True),
         )
 
     logger.info(
         "Received query for session %s belonging to %s", record.session_id, _session_key(active_role, active_user)
     )
-    active_start = start_time or time.perf_counter()
+    active_start = time.perf_counter()
 
     existing_history = [(turn[0], turn[1]) for turn in (history or [])]
     working_history: list[tuple[str, str]] = list(existing_history)
@@ -667,52 +560,45 @@ def respond(
     _persist_history(record.session_id, active_role, active_user, working_history)
 
     partial_answer = ""
-    error_detected = False
+    logger.debug("Streaming response for session %s initiated", record.session_id)
+    meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
+    yield (
+        "",
+        working_history,
+        record.session_id,
+        meta,
+        gr.update(interactive=False),
+    )
+
     for progress in stream_query_rag(sanitized):
         if progress.partial_answer:
             partial_answer = progress.partial_answer
         working_history[-1] = (sanitized, partial_answer)
-        status_text = _format_eta_status(progress)
-        stage_text = _stage_label(progress)
-        elapsed_seconds = (time.perf_counter() - active_start) if active_start else None
-        elapsed_label = _format_elapsed_label(elapsed_seconds)
-        eta_label = _format_eta_label(progress)
         _persist_history(record.session_id, active_role, active_user, working_history)
         meta = _format_session_meta(_load_session(active_role, active_user, record.session_id))
         if progress.stage == "error":
-            error_detected = True
-            logger.error("Progress stream reported error for session %s: %s", record.session_id, status_text)
+            error_text = progress.detail or "The RAG engine is unavailable."
+            working_history[-1] = (sanitized, error_text)
+            logger.error("Progress stream reported error for session %s: %s", record.session_id, error_text)
+            _persist_history(record.session_id, active_role, active_user, working_history)
             yield (
                 "",
                 working_history,
-                status_text,
                 record.session_id,
                 meta,
-                stage_text,
-                True,
-                gr.update(
-                    value=f"{status_text} — Try again.",
-                    visible=True,
-                ),
-                gr.update(value=elapsed_label, visible=True),
-                gr.update(value=eta_label, visible=False),
+                gr.update(interactive=True),
             )
             return
 
         logger.debug(
-            "Streaming update for session %s: stage=%s detail=%s", record.session_id, progress.stage, status_text
+            "Streaming update for session %s: stage=%s", record.session_id, progress.stage
         )
         yield (
             "",
             working_history,
-            status_text,
             record.session_id,
             meta,
-            stage_text,
-            error_detected,
-            gr.update(visible=False, value=""),
-            gr.update(value=elapsed_label, visible=True),
-            gr.update(value=eta_label, visible=True),
+            gr.update(interactive=False),
         )
 
     elapsed = time.perf_counter() - active_start
@@ -723,62 +609,9 @@ def respond(
     yield (
         "",
         working_history,
-        f"Response time: {elapsed:.2f}s",
         record.session_id,
         meta,
-        "Finalizing…",
-        error_detected,
-        gr.update(visible=False, value=""),
-        gr.update(value=_format_elapsed_label(elapsed), visible=True),
-        gr.update(value="ETA: complete", visible=not error_detected),
-    )
-
-
-def begin_response_cycle(prompt: str, start_time: float | None) -> tuple:
-    """Immediately display loading indicators and disable submission controls."""
-
-    sanitized = (prompt or "").strip()
-    new_start = time.perf_counter()
-    thinking_text = "Retrieving context…"
-    logger.info(
-        "Starting response cycle at %.6f with prompt length=%d", new_start, len(sanitized)
-    )
-    return (
-        new_start,
-        gr.update(value=thinking_text, visible=True),
-        gr.update(visible=True),
-        gr.update(interactive=False),
-        gr.update(value=thinking_text, visible=True),
-        gr.update(value="Elapsed: 00:00.0", visible=True),
-        gr.update(value="ETA: calculating…", visible=True),
-        False,
-        gr.update(visible=False, value=""),
-    )
-
-
-def finalize_response_cycle(current_timer: str, start_time: float | None, errored: bool) -> tuple:
-    """Hide loading indicators, re-enable submission, and report elapsed time."""
-
-    elapsed = (time.perf_counter() - start_time) if start_time else None
-    done_text = (
-        "Encountered an error while generating the answer." if errored else (current_timer or "Answered.")
-    )
-    elapsed_label = _format_elapsed_label(elapsed)
-    logger.info(
-        "Finalizing response cycle; elapsed=%.3f, previous_timer=%s, errored=%s",
-        elapsed or -1.0,
-        current_timer,
-        errored,
-    )
-    return (
-        gr.update(value=("Finalizing…" if not errored else "Error"), visible=False),
-        gr.update(visible=False),
         gr.update(interactive=True),
-        gr.update(value=done_text, visible=True),
-        gr.update(value=elapsed_label, visible=True),
-        gr.update(value=("ETA: --" if errored else "ETA: complete"), visible=not errored),
-        gr.update(visible=errored, value=(done_text if errored else "")),
-        False,
     )
 
 
@@ -850,14 +683,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
             "",
             [],
             "Session inactive. Log in to begin.",
-            "Response time: --",
-            gr.update(value="Ready to search.", visible=True),
-            gr.update(visible=False),
-            gr.update(value="Elapsed: 00:00.0", visible=False),
-            gr.update(value="ETA: calculating…", visible=False),
-            False,
-            gr.update(visible=False, value=""),
-            None,
+            gr.update(interactive=True),
             gr.update(value=""),
             gr.update(value=""),
             gr.update(value=_build_document_rows()),
@@ -893,14 +719,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         sessions[0],
         sessions[1],
         sessions[2],
-        sessions[3],
-        gr.update(value="Ready to search.", visible=True),
-        gr.update(visible=False),
-        gr.update(value="Elapsed: 00:00.0", visible=False),
-        gr.update(value="ETA: calculating…", visible=False),
-        False,
-        gr.update(visible=False, value=""),
-        None,
+        gr.update(interactive=True),
         gr.update(value=safe_username),
         gr.update(value=role),
         gr.update(value=doc_rows),
@@ -921,9 +740,10 @@ def logout(state: AppState) -> tuple:
     return (
         cleared_state,
         gr.update(value="Ready to sign in.", visible=False),
+        gr.update(value="", visible=False),
         gr.update(visible=True),
         gr.update(visible=False),
-        gr.update(value="", visible=False),
+        gr.update(visible=False),
         gr.update(visible=False),
         gr.update(visible=False),
         gr.update(value=""),
@@ -931,16 +751,9 @@ def logout(state: AppState) -> tuple:
         "",
         [],
         "Session ready. Conversations persist automatically.",
-        "Response time: --",
-        gr.update(value="Ready to search.", visible=True),
-        gr.update(visible=False),
-        gr.update(value="Elapsed: 00:00.0", visible=False),
-        gr.update(value="ETA: calculating…", visible=False),
-        False,
-        gr.update(visible=False, value=""),
-        None,
-        "",
-        "",
+        gr.update(interactive=True),
+        gr.update(value=""),
+        gr.update(value=""),
         gr.update(value=_build_document_rows()),
         _render_library_overview([]),
         "Browse and manage ingested documents.",
@@ -1085,27 +898,6 @@ body {background: #0d0f12; color: #e8ebf1;}
   padding: 0 !important;
 }
 
-.status-row {
-  align-items: center !important;
-  gap: 6px !important;
-  flex-wrap: nowrap !important;
-  padding: 2px 0 !important;
-  margin: 0 !important;
-  max-height: 40px;
-  min-height: 28px;
-}
-
-.status-row .status,
-#stage-indicator,
-#elapsed-indicator,
-#eta-indicator,
-#loading-spinner {
-  margin: 0 !important;
-  padding: 0 !important;
-  white-space: nowrap;
-  line-height: 1.25;
-}
-
 button.primary {background: linear-gradient(135deg, #4b82f7, #8a6bff); color: #fff; border-radius: 12px; border: none;}
 button, .btn {color: #f5f7ff !important; font-weight: 600;}
 button.ghost {background: #1d2330; border: 1px solid #4a5770; color: #f5f7ff; border-radius: 10px;}
@@ -1114,9 +906,6 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
 .session-table table {width: 100%;}
 .session-table td:last-child, .docs-table td:last-child {text-align: center; width: 56px;}
 .status {color: #9ea8c2; font-size: 13px; margin: 0 !important;}
-.loading-spinner {width: 20px; height: 20px; border-radius: 50%; border: 3px solid #1f2937; border-top-color: #6fb1ff; animation: spin 0.9s linear infinite;}
-@keyframes spin {to {transform: rotate(360deg);}}
-.error-banner {background: rgba(128, 38, 38, 0.35); color: #f6dada; padding: 6px 10px; border-radius: 8px; border: 1px solid #a94040; font-weight: 600;}
 
 /* Chat transcript cleanup to remove phantom glyphs and excessive whitespace. */
 .chatbot {
@@ -1193,43 +982,6 @@ button.ghost:hover {background: #242c3a; border-color: #6a7aa0;}
 @media (max-width: 960px){.layout-row{flex-direction:column;} .sidebar{max-width:100%; width:100%;}}
 """
 
-TIMER_SCRIPT = """
-<script>
-(() => {
-  const LOG_PREFIX = "rag-timer";
-
-  const log = (...args) => {
-    console.debug(`[${LOG_PREFIX}]`, ...args);
-  };
-
-  const ready = () => {
-    const stageEl = document.querySelector("#stage-indicator");
-    const elapsedEl = document.querySelector("#elapsed-indicator");
-    const etaEl = document.querySelector("#eta-indicator");
-    if (!stageEl || !elapsedEl || !etaEl) {
-      window.setTimeout(ready, 400);
-      return;
-    }
-
-    const syncVisibility = () => {
-      const text = (stageEl.textContent || "").toLowerCase();
-      const working = text && !text.startsWith("ready") && !text.startsWith("session ready");
-      elapsedEl.style.display = working ? "" : "none";
-      etaEl.style.display = working ? "" : "none";
-      log("Updated indicator visibility", { working, text });
-    };
-
-    syncVisibility();
-
-    const observer = new MutationObserver(syncVisibility);
-    observer.observe(stageEl, { childList: true, subtree: true, characterData: true });
-  };
-
-  ready();
-})();
-</script>
-"""
-
 
 def build_app() -> gr.Blocks:
     """Create the Blocks application with conditional rendering."""
@@ -1246,9 +998,6 @@ def build_app() -> gr.Blocks:
         role_state = gr.State("")
         session_state = gr.State("")
         selected_doc_state = gr.State("")
-        start_time_state = gr.State(None)
-        error_state = gr.State(False)
-        gr.HTML(TIMER_SCRIPT, visible=False, elem_id="timer-script")
 
         # ---------------------- Login Screen ----------------------
         with gr.Column(visible=True, elem_classes=["panel"], elem_id="login-view") as login_view:
@@ -1301,43 +1050,6 @@ def build_app() -> gr.Blocks:
                             variant="primary",
                             scale=1,
                         )
-                    with gr.Row(elem_classes=["status-row"]):
-                        loading_spinner = gr.HTML(
-                            value="<div class='loading-spinner' aria-label='Loading'></div>",
-                            visible=False,
-                            elem_id="loading-spinner",
-                        )
-                        with gr.Row(elem_classes=["status-labels"], elem_id="status-labels-wrapper"):
-                            stage_md = _safe_markdown(
-                                "Ready to search.",
-                                elem_classes=["status", "status-label"],
-                                elem_id="stage-indicator",
-                            )
-                            elapsed_md = _safe_markdown(
-                                "Elapsed: 00:00.0",
-                                visible=False,
-                                elem_classes=["status", "status-label"],
-                                elem_id="elapsed-indicator",
-                            )
-                            eta_md = _safe_markdown(
-                                "ETA: calculating…",
-                                visible=False,
-                                elem_classes=["status", "status-label"],
-                                elem_id="eta-indicator",
-                            )
-                        logger.debug(
-                            "Status indicators configured with flex alignment for stage, elapsed, and ETA labels"
-                        )
-                    with gr.Row(elem_classes=["status-row"]):
-                        response_timer = _safe_markdown(
-                            "Response time: --", elem_classes=["status"], elem_id="status-detail"
-                        )
-                        error_banner = _safe_markdown(
-                            "",
-                            visible=False,
-                            elem_classes=["error-banner"],
-                            elem_id="error-banner",
-                        )
                     chatbot = gr.Chatbot(height=520, bubble_full_width=False, elem_classes=["chatbot"])
                     with gr.Row():
                         clear_btn = gr.Button("Clear", elem_classes=["ghost"], variant="secondary")
@@ -1387,10 +1099,10 @@ def build_app() -> gr.Blocks:
 
 Use this app to perform AI-powered search across your MQ knowledge base. Authenticate to access personalized sessions and document management.
 
-**Running a search**
-- Enter a query in the large search bar and press Enter.
-- The assistant responds with contextual answers and cites past turns.
-- Response time and session metadata remain visible above the chat stream.
+ **Running a search**
+ - Enter a query in the large search bar and press Enter.
+ - The assistant responds with contextual answers and cites past turns.
+ The assistant responds with contextual answers and cites past turns.
 
 **Sessions**
 - Sessions persist automatically so you can return to them later without manual cleanup.
@@ -1434,14 +1146,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 session_state,
                 chatbot,
                 session_meta,
-                response_timer,
-                stage_md,
-                loading_spinner,
-                elapsed_md,
-                eta_md,
-                error_state,
-                error_banner,
-                start_time_state,
+                hero_submit_btn,
                 user_state,
                 role_state,
                 doc_table,
@@ -1474,14 +1179,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 session_state,
                 chatbot,
                 session_meta,
-                response_timer,
-                stage_md,
-                loading_spinner,
-                elapsed_md,
-                eta_md,
-                error_state,
-                error_banner,
-                start_time_state,
+                hero_submit_btn,
                 user_state,
                 role_state,
                 doc_table,
@@ -1496,89 +1194,25 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
 
         # Search interactions
         hero_query.submit(
-            begin_response_cycle,
-            inputs=[hero_query, start_time_state],
-            outputs=[
-                start_time_state,
-                stage_md,
-                loading_spinner,
-                hero_submit_btn,
-                response_timer,
-                elapsed_md,
-                eta_md,
-                error_state,
-                error_banner,
-            ],
-        ).then(
             respond,
-            inputs=[hero_query, chatbot, app_state, session_state, user_state, start_time_state],
+            inputs=[hero_query, chatbot, app_state, session_state, user_state],
             outputs=[
                 hero_query,
                 chatbot,
-                response_timer,
                 session_state,
                 session_meta,
-                stage_md,
-                error_state,
-                error_banner,
-                elapsed_md,
-                eta_md,
-            ],
-        ).then(
-            finalize_response_cycle,
-            inputs=[response_timer, start_time_state, error_state],
-            outputs=[
-                stage_md,
-                loading_spinner,
                 hero_submit_btn,
-                response_timer,
-                elapsed_md,
-                eta_md,
-                error_banner,
-                error_state,
             ],
         )
         hero_submit_btn.click(
-            begin_response_cycle,
-            inputs=[hero_query, start_time_state],
-            outputs=[
-                start_time_state,
-                stage_md,
-                loading_spinner,
-                hero_submit_btn,
-                response_timer,
-                elapsed_md,
-                eta_md,
-                error_state,
-                error_banner,
-            ],
-        ).then(
             respond,
-            inputs=[hero_query, chatbot, app_state, session_state, user_state, start_time_state],
+            inputs=[hero_query, chatbot, app_state, session_state, user_state],
             outputs=[
                 hero_query,
                 chatbot,
-                response_timer,
                 session_state,
                 session_meta,
-                stage_md,
-                error_state,
-                error_banner,
-                elapsed_md,
-                eta_md,
-            ],
-        ).then(
-            finalize_response_cycle,
-            inputs=[response_timer, start_time_state, error_state],
-            outputs=[
-                stage_md,
-                loading_spinner,
                 hero_submit_btn,
-                response_timer,
-                elapsed_md,
-                eta_md,
-                error_banner,
-                error_state,
             ],
         )
         hero_clear_btn.click(
@@ -1590,7 +1224,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
         clear_btn.click(
             clear_session_history,
             inputs=[session_state, app_state],
-            outputs=[chatbot, response_timer, session_state, session_meta],
+            outputs=[chatbot, session_state, session_meta],
             queue=False,
         )
 
@@ -1662,9 +1296,10 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             outputs=[
                 app_state,
                 login_status,
+                login_error,
                 login_view,
                 workspace,
-                login_error,
+                help_view,
                 search_view,
                 manage_docs_view,
                 user_badge,
@@ -1672,14 +1307,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 session_state,
                 chatbot,
                 session_meta,
-                response_timer,
-                stage_md,
-                loading_spinner,
-                elapsed_md,
-                eta_md,
-                error_state,
-                error_banner,
-                start_time_state,
+                hero_submit_btn,
                 user_state,
                 role_state,
                 doc_table,
@@ -1697,9 +1325,10 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
             outputs=[
                 app_state,
                 login_status,
+                login_error,
                 login_view,
                 workspace,
-                login_error,
+                help_view,
                 search_view,
                 manage_docs_view,
                 user_badge,
@@ -1707,14 +1336,7 @@ Use this app to perform AI-powered search across your MQ knowledge base. Authent
                 session_state,
                 chatbot,
                 session_meta,
-                response_timer,
-                stage_md,
-                loading_spinner,
-                elapsed_md,
-                eta_md,
-                error_state,
-                error_banner,
-                start_time_state,
+                hero_submit_btn,
                 user_state,
                 role_state,
                 doc_table,
