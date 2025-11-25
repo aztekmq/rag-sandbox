@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Local development launcher for the mq-rag Gradio web UI.
-# Responsibilities (aligned with International Programming Standards):
-# - enforce strict Bash safety options with verbose tracing for debuggability
-# - isolate Docker client configuration to avoid credential helper noise
-# - reuse existing mq-rag Docker assets when possible, pruning only unneeded ones
-# - rebuild and relaunch the Gradio container with minimal disruption
+# Local dev launcher - UPDATE mode (no destroy)
+# - Rebuilds image if code/model/config changed
+# - Recreates container without touching volumes or losing data
+# - Keeps existing container running until the new one is healthy
 
 set -Eeuo pipefail
 set -x
@@ -12,14 +10,7 @@ set -x
 PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 TEMP_DOCKER_CONFIG="$(mktemp -d)"
 
-log() {
-  local level="${1}"
-  shift
-  printf '[%s] %s\n' "${level}" "$*"
-}
-
 cleanup() {
-  log INFO "Removing temporary Docker config at ${TEMP_DOCKER_CONFIG}"
   rm -rf -- "${TEMP_DOCKER_CONFIG}"
 }
 trap cleanup EXIT
@@ -30,25 +21,20 @@ export BUILDKIT_PROGRESS=plain
 
 cd -- "${PROJECT_ROOT}"
 
-# Ensure expected local dirs exist (relative to project root).
-log INFO "Ensuring required data directories exist"
+# Ensure local directories exist
 mkdir -p -- models data
 
-# Remove any stopped mq-rag containers to prevent name conflicts while preserving
-# running services that may still be healthy.
-stopped_containers=$(docker ps -aq --filter "name=^mq-rag$" --filter "status=exited" || true)
-if [[ -n "${stopped_containers}" ]]; then
-  log INFO "Cleaning up stopped mq-rag containers"
-  docker rm --force ${stopped_containers} || true
-fi
+# Optional: prune unused images to save space (remove this line if you don't want it)
+# docker image prune -a -f
 
-# Prune unused mq-rag images left behind by rebuilds without touching unrelated assets.
-log INFO "Pruning dangling mq-rag images"
-docker image prune --force --filter "label=com.docker.compose.project=rag-sandbox" --filter "dangling=true" || true
+# This is the key change:
+# --build         → rebuild image if Dockerfile/code changed
+# --force-recreate → recreate the container even if config is identical
+# --no-deps       → don't touch other services (we only have one anyway)
+# -d              → run detached
+# We DO NOT run "docker compose down" anymore
 
-# Optional: uncomment if you really want a clear screen each run.
-# clear
+docker compose up -d --build --force-recreate --no-deps
 
-# Rebuild only what is necessary and (re)start the Gradio service.
-log INFO "Launching mq-rag with minimal redeploy"
-docker compose up -d --build rag-sandbox
+echo "Update complete - mq-rag container has been recreated with the latest image."
+echo "Access it at http://localhost:7860"
