@@ -198,6 +198,31 @@ def _ensure_default_session(role: str, username: str) -> SessionRecord:
     return record
 
 
+def _time_based_greeting(username: str | None) -> str:
+    """Return a greeting aligned to the local hour for the user experience."""
+
+    current_hour = datetime.now().hour
+    logger.debug("Computing greeting for %s at hour %s", username or "friend", current_hour)
+
+    if 5 <= current_hour < 12:
+        salutation = "Good morning"
+    elif 12 <= current_hour < 18:
+        salutation = "Good afternoon"
+    elif 18 <= current_hour < 22:
+        salutation = "Good evening"
+    else:
+        salutation = "Good night"
+
+    safe_username = (username or "friend").strip()
+    return f"{salutation}, {safe_username}" if safe_username else salutation
+
+
+def log_ui_event(event: str) -> None:
+    """Emit a structured log entry for front-end interactions."""
+
+    logger.info("UI interaction recorded: %s", event)
+
+
 def _format_session_meta(record: SessionRecord) -> str:
     """Render a compact summary for the active session without rigid labels."""
 
@@ -796,7 +821,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
             gr.update(visible=False),
             gr.update(value=""),
             gr.update(value=""),
-            gr.update(value="✺ Good morning, friend"),
+            gr.update(value=_time_based_greeting(None)),
             gr.update(value="How can I help you today?"),
             "",
             [],
@@ -838,7 +863,7 @@ def attempt_login(username: str, password: str, state: AppState) -> tuple:
         gr.update(visible=False),
         gr.update(value=safe_username),
         gr.update(value=role.title()),
-        gr.update(value=f"✺ Good morning, {safe_username}"),
+        gr.update(value=_time_based_greeting(safe_username)),
         gr.update(value="How can I help you today?"),
         sessions[0],
         sessions[1],
@@ -876,7 +901,7 @@ def logout(state: AppState) -> tuple:
         gr.update(visible=False),
         gr.update(value=""),
         gr.update(value=""),
-        gr.update(value="✺ Good morning, friend"),
+        gr.update(value=_time_based_greeting(None)),
         gr.update(value="How can I help you today?"),
         "",
         [],
@@ -1009,93 +1034,107 @@ def build_app() -> gr.Blocks:
 
         # ---------------------- Workspace -------------------------
         with gr.Column(visible=False, elem_id="workspace", elem_classes=["dashboard"]) as workspace:
-            with gr.Row(elem_classes=["body-row", "layout-row", "app-grid"]):
+            with gr.Row(elem_classes=["body-row", "layout-row", "app-grid", "canvas-row"]):
                 # Sidebar / nav rail
                 with gr.Column(elem_classes=["nav-rail"], scale=1):
                     _safe_markdown("#### Navigation", elem_classes=["section-title"])
                     with gr.Column(elem_classes=["nav-buttons"]):
+                        nav_toggle_btn = gr.Button(
+                            "☰",
+                            elem_classes=["ghost", "nav-icon"],
+                            variant="secondary",
+                        )
+                        nav_new_chat_btn = gr.Button(
+                            "+",
+                            elem_classes=["ghost", "nav-icon"],
+                            variant="secondary",
+                        )
                         manage_docs_btn = gr.Button(
                             "📄",
-                            elem_classes=["ghost"],
+                            elem_classes=["ghost", "nav-icon"],
                             variant="secondary",
                         )
                         help_btn = gr.Button(
                             "❓",
-                            elem_classes=["ghost"],
+                            elem_classes=["ghost", "nav-icon"],
                             variant="secondary",
                         )
                         _safe_markdown("", visible=False)  # spacer for alignment
 
                 # Main content
-                with gr.Column(scale=9, elem_classes=["main-area"], elem_id="main-content"):
-                    with gr.Row(elem_classes=["header-row"]):
-                        with gr.Column(scale=10, elem_classes=["header-content"]):
-                            _safe_markdown("✺", elem_classes=["header-glyph"])
-                            greeting_title = _safe_markdown(
-                                "Good morning, admin", elem_classes=["greeting-title"]
-                            )
-                            greeting_subtitle = _safe_markdown(
-                                "How can I help you today?", elem_classes=["greeting-subtitle"]
-                            )
-                            with gr.Row(elem_classes=["badge-row"]):
-                                user_badge = _safe_markdown(
-                                    "", elem_classes=["badge", "light-badge"]
-                                )
-                                role_badge = _safe_markdown(
-                                    "", elem_classes=["badge", "light-badge"]
-                                )
-                                _safe_markdown(
-                                    "<span class='badge light-badge'>Environment: Prod</span>",
-                                    elem_classes=[],
-                                )
-                                plan_badge = _safe_markdown(
-                                    "<span class='badge plan-pill'>Free plan · Upgrade</span>",
-                                    elem_classes=[],
-                                )
-                        with gr.Column(scale=2, elem_classes=["header-actions"]):
-                            logout_btn = gr.Button(
-                                "Logout", variant="secondary", elem_classes=["ghost"], scale=0
+                with gr.Column(
+                    scale=9, elem_classes=["main-area", "center-stage"], elem_id="main-content"
+                ):
+                    with gr.Column(elem_classes=["greeting-stack"]):
+                        greeting_icon = _safe_markdown("✺", elem_classes=["greeting-icon"])
+                        greeting_title = _safe_markdown(
+                            "Good morning, admin", elem_classes=["greeting-title"]
+                        )
+                        greeting_subtitle = _safe_markdown(
+                            "How can I help you today?", elem_classes=["greeting-subtitle"]
+                        )
+                        with gr.Row(elem_classes=["badge-row"]):
+                            user_badge = _safe_markdown("", elem_classes=["badge", "light-badge"])
+                            role_badge = _safe_markdown("", elem_classes=["badge", "light-badge"])
+                            plan_badge = _safe_markdown(
+                                "<span class='badge plan-pill'>Free plan · Upgrade</span>",
+                                elem_classes=[],
                             )
 
                     with gr.Column(
-                        visible=True, elem_id="search-view", elem_classes=["panel", "conversation-card"]
+                        visible=True, elem_id="search-view", elem_classes=["panel", "prompt-card"]
                     ) as search_view:
-                        with gr.Row(elem_classes=["workflow-panel"]):
-                            hero_query = gr.Textbox(
-                                label="",
-                                placeholder="Ask anything about MQ — documentation, logs, or troubleshooting steps…",
-                                lines=2,
-                                elem_classes=["hero-input"],
-                            )
-                        with gr.Row(elem_classes=["hero-actions"]):
-                            _safe_markdown(
-                                "＋ · 📎 · 📷 · α",
-                                elem_classes=["status"],
-                            )
-                            _safe_markdown("", elem_classes=["status", "action-spacer"])
+                        with gr.Column(elem_classes=["prompt-stack"]):
+                            with gr.Row(elem_classes=["prompt-row"]):
+                                with gr.Column(elem_classes=["prompt-wrapper"], scale=10):
+                                    hero_query = gr.Textbox(
+                                        label="",
+                                        placeholder="How can I help you today?",
+                                        lines=2,
+                                        elem_classes=["hero-input"],
+                                    )
+                                    with gr.Row(elem_classes=["input-accessories"]):
+                                        plugin_btn = gr.Button(
+                                            "+",
+                                            elem_classes=["icon-button"],
+                                            variant="secondary",
+                                        )
+                                        settings_btn = gr.Button(
+                                            "⚙",
+                                            elem_classes=["icon-button"],
+                                            variant="secondary",
+                                        )
+                                        timer_btn = gr.Button(
+                                            "⏱",
+                                            elem_classes=["icon-button"],
+                                            variant="secondary",
+                                        )
+                                        hero_clear_btn = gr.Button(
+                                            "Clear",
+                                            elem_classes=["ghost", "inline-action"],
+                                            variant="secondary",
+                                        )
+                                with gr.Column(elem_classes=["submit-slot"], scale=2):
+                                    hero_submit_btn = gr.Button(
+                                        "➜",
+                                        elem_classes=["primary", "submit-button"],
+                                        variant="primary",
+                                        scale=1,
+                                    )
 
-                        with gr.Row(elem_classes=["action-row"]):
-                            with gr.Column(scale=1, elem_classes=["action-slot", "align-start"]):
-                                clear_btn = gr.Button(
-                                    "Reset Session",
-                                    elem_classes=["ghost"],
-                                    variant="secondary",
-                                    scale=0,
-                                )
-                            with gr.Column(scale=1, elem_classes=["action-slot", "align-center"]):
-                                hero_clear_btn = gr.Button(
-                                    "Clear",
-                                    elem_classes=["ghost"],
-                                    variant="secondary",
-                                    scale=1,
-                                )
-                            with gr.Column(scale=1, elem_classes=["action-slot", "align-end"]):
-                                hero_submit_btn = gr.Button(
-                                    "Submit",
-                                    elem_classes=["primary"],
-                                    variant="primary",
-                                    scale=1,
-                                )
+                        with gr.Row(elem_classes=["session-actions"]):
+                            clear_btn = gr.Button(
+                                "Reset Session",
+                                elem_classes=["ghost", "text-link"],
+                                variant="secondary",
+                                scale=0,
+                            )
+                            logout_btn = gr.Button(
+                                "Logout",
+                                variant="secondary",
+                                elem_classes=["ghost", "text-link"],
+                                scale=0,
+                            )
 
                         with gr.Row(elem_classes=["kpi-strip"]):
                             kpi_sessions = _safe_markdown(
@@ -1327,6 +1366,16 @@ Use this app to perform AI-powered search across your MQ knowledge base once you
             outputs=[chatbot, session_state, session_meta, kpi_sessions, kpi_docs, kpi_latency],
             queue=False,
         )
+        nav_new_chat_btn.click(
+            clear_session_history,
+            inputs=[session_state, app_state],
+            outputs=[chatbot, session_state, session_meta, kpi_sessions, kpi_docs, kpi_latency],
+            queue=False,
+        )
+        nav_toggle_btn.click(lambda: log_ui_event("nav.toggle"), inputs=None, outputs=None, queue=False)
+        plugin_btn.click(lambda: log_ui_event("prompt.plugin"), inputs=None, outputs=None, queue=False)
+        settings_btn.click(lambda: log_ui_event("prompt.settings"), inputs=None, outputs=None, queue=False)
+        timer_btn.click(lambda: log_ui_event("prompt.timer"), inputs=None, outputs=None, queue=False)
 
         # Document tools
         ingest_btn.click(
