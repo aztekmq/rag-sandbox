@@ -35,10 +35,10 @@ body {
 
 .gradio-container {
   width: 100%;
-  max-width: 1500px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 12px 14px !important;
-  gap: 12px !important;
+  padding: 20px 18px !important;
+  gap: 16px !important;
   background: transparent;
   overflow-x: hidden;
 }
@@ -65,12 +65,17 @@ body {
 }
 
 .dashboard {
-  gap: 16px !important;
+  gap: 24px !important;
 }
 
 .app-grid {
   align-items: stretch;
-  gap: 18px !important;
+  gap: 24px !important;
+}
+
+.canvas-row {
+  justify-content: center;
+  align-items: flex-start;
 }
 
 .header-bar {
@@ -132,19 +137,19 @@ body {
 }
 
 .nav-rail {
-  flex: 0 0 72px;
-  max-width: 72px;
-  min-width: 72px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 12px 10px 14px !important;
-  gap: 10px !important;
+  flex: 0 0 56px;
+  max-width: 56px;
+  min-width: 56px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 8px 0 8px 0 !important;
+  gap: 12px !important;
   position: sticky;
-  top: 12px;
-  height: calc(100vh - 120px);
-  box-shadow: var(--shadow);
-  align-items: center;
+  top: 18px;
+  height: calc(100vh - 80px);
+  box-shadow: none;
+  align-items: flex-start;
 }
 
 .nav-rail .section-title {
@@ -152,23 +157,25 @@ body {
 }
 
 .nav-rail .nav-buttons {
-  gap: 10px !important;
+  gap: 12px !important;
   width: 100%;
-  align-items: center;
+  align-items: flex-start;
 }
 
 .nav-rail .nav-buttons button {
-  width: 44px;
-  height: 44px;
-  justify-content: center;
+  width: 42px;
+  height: 42px;
+  justify-content: flex-start;
   border-radius: 14px !important;
   border: 1px solid transparent !important;
-  background: var(--secondary) !important;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  background: transparent !important;
+  color: var(--text) !important;
+  padding-left: 10px !important;
 }
 
 .nav-rail .nav-buttons button:hover {
   border-color: var(--border) !important;
+  background: var(--secondary) !important;
 }
 
 .nav-rail .history-panel {
@@ -176,9 +183,44 @@ body {
 }
 
 .main-area {
-  gap: 16px !important;
+  gap: 18px !important;
   min-width: 0;
   background: transparent;
+  align-items: center;
+}
+
+.center-stage {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.greeting-stack {
+  text-align: center;
+  gap: 6px !important;
+  align-items: center;
+}
+
+.greeting-icon {
+  font-size: 26px !important;
+  margin-bottom: 2px;
+}
+
+.greeting-title {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.greeting-subtitle {
+  font-size: 16px;
+  color: var(--muted);
+  margin-top: -4px;
+}
+
+.badge-row {
+  justify-content: center;
+  gap: 10px !important;
+  flex-wrap: wrap;
 }
 
 .panel {
@@ -204,7 +246,7 @@ body {
 
 .greeting-title {
   text-align: center;
-  font-size: 28px !important;
+  font-size: 32px !important;
   margin: 0 !important;
   font-weight: 800 !important;
   color: var(--text);
@@ -214,8 +256,8 @@ body {
   text-align: center;
   margin: 0 auto 6px auto !important;
   color: var(--muted);
-  font-size: 15px !important;
-  max-width: 640px;
+  font-size: 16px !important;
+  max-width: 720px;
 }
 
 .badge-row .badge {
@@ -227,13 +269,29 @@ body {
   gap: 10px !important;
 }
 
-.conversation-card {
-  max-width: 940px;
+.prompt-card {
+  width: 100%;
+  max-width: 960px;
   margin: 0 auto;
   background: #ffffff;
-  box-shadow: 0 24px 70px rgba(61, 51, 40, 0.08);
-  border-radius: 24px;
+  box-shadow: 0 28px 70px rgba(61, 51, 40, 0.08);
+  border-radius: 22px;
   padding: 18px 20px !important;
+}
+
+.prompt-stack {
+  width: 100%;
+  gap: 8px !important;
+}
+
+.prompt-row {
+  align-items: center;
+  gap: 10px !important;
+}
+
+.prompt-wrapper {
+  position: relative;
+  width: 100%;
 }
 
 .kpi-strip {
@@ -266,23 +324,17 @@ body {
   font-weight: 700 !important;
 }
 
-.workflow-panel textarea,
-.workflow-panel input,
-.workflow-panel .gr-textbox textarea {
-  min-height: 70px;
-}
-
 .hero-input input,
 .hero-input textarea {
-  border-radius: 18px;
+  border-radius: 20px;
   border: 1px solid var(--border);
-  background: #fcf9f4;
+  background: #fdfbf7;
   color: var(--text);
-  font-size: 15px;
-  padding: 12px 14px;
+  font-size: 16px;
+  padding: 16px 18px 46px 18px;
   margin: 0 !important;
-  min-height: 86px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  min-height: 110px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), 0 18px 32px rgba(61, 51, 40, 0.12);
 }
 
 .hero-input textarea:focus,
@@ -294,45 +346,57 @@ input:focus {
   box-shadow: var(--focus-ring);
 }
 
-.hero-actions {
-  align-items: center !important;
+.input-accessories {
+  position: absolute;
+  left: 18px;
+  bottom: 14px;
   gap: 8px !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  justify-content: space-between;
-}
-
-.hero-actions .status {
-  font-size: 14px !important;
-}
-
-.action-row {
   align-items: center;
+}
+
+.icon-button button,
+button.icon-button,
+.inline-action button,
+button.inline-action {
+  width: 36px;
+  height: 36px;
+  padding: 0 !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--secondary) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.inline-action button,
+button.inline-action {
+  width: auto;
+  padding: 0 10px !important;
+}
+
+.submit-slot {
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+.submit-button {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px !important;
+  box-shadow: 0 18px 40px rgba(193, 74, 26, 0.25);
+}
+
+.session-actions {
+  justify-content: center;
   gap: 10px !important;
 }
 
-.action-slot {
-  width: 100%;
-}
-
-.align-start {
-  align-items: flex-start;
-}
-
-.align-center {
-  align-items: center;
-}
-
-.align-end {
-  align-items: flex-end;
-}
-
-.action-slot button {
-  width: 100%;
-}
-
-.action-spacer {
-  visibility: hidden;
+.text-link button,
+button.text-link {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--muted) !important;
+  box-shadow: none !important;
+  padding: 4px 10px !important;
 }
 
 input,
