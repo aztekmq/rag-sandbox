@@ -262,3 +262,14 @@ python -m app.main
 ## Security
 - Store real secrets in `.env` or Docker secrets; never commit them.
 - Default credentials are for local testing only—update them before production use.
+
+## Codex prompt manifest workflow
+- The authoritative orientation guide for agents lives at `CODEX_MANIFEST.md`. Read it before proposing UI or UX changes.
+- Regenerate the auto-discovery sections any time the repo layout shifts:
+  ```bash
+  python tools/generate_codex_manifest.py
+  ```
+  The script uses verbose logging so you can audit what was scanned.
+- Use this prompt header to ensure agents honor the manifest and the UI-focused definition of done:
+  > Read CODEX_MANIFEST.md first and treat it as authoritative context. Follow its Hard Rules + Definition of Done. If any part conflicts with your task, stop and explain the conflict.
+- Keep the **Change Log** section of `CODEX_MANIFEST.md` up to date when architecture or entrypoints move.
