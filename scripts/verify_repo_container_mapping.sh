@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Purpose: Verify that the Git repository inside the Docker container is correctly mapped and usable.
 # The script emits verbose logs for each validation step to ease debugging and follows international scripting standards.
+# The script also emits an Executive Verification screen summarizing whether the container is using the expected
+# host-mounted Git repository or relying on internal image code (e.g., bundled Gradio sources).
 # Usage:
 #   ./scripts/verify_repo_container_mapping.sh [--repo-path PATH] [--expected-remote URL] [--expected-branch NAME]
 # Notes:
@@ -19,6 +21,22 @@ log() {
 log_info() { log "INFO" "$1"; }
 log_warn() { log "WARN" "$1"; }
 log_error() { log "ERROR" "$1"; }
+
+print_divider() {
+  printf '\n%s\n' "============================================================"
+}
+
+print_executive_header() {
+  print_divider
+  printf "|| %-58s||\n" "Repository Mapping Executive Verification"
+  print_divider
+}
+
+print_kv() {
+  local label="$1"
+  local value="$2"
+  printf "|| %-20s : %-33s||\n" "${label}" "${value}"
+}
 
 usage() {
   cat <<'USAGE'
@@ -106,6 +124,24 @@ else
   log_warn "findmnt is not available; mount mapping cannot be inspected."
 fi
 
+MOUNT_STATUS="UNKNOWN"
+MOUNT_NOTES="Mount inspection not available; cannot confirm whether the host repository is mapped."
+
+if [[ -n "${MOUNT_INFO:-}" ]]; then
+  read -r MNT_TARGET MNT_SOURCE MNT_FSTYPE MNT_OPTIONS <<<"${MOUNT_INFO}"
+  if [[ "${MNT_OPTIONS}" == *"bind"* ]]; then
+    MOUNT_STATUS="HOST_BIND"
+    MOUNT_NOTES="Bind mount detected (options include 'bind'); repository should reflect the host Git checkout."
+  elif [[ "${MNT_FSTYPE}" == "overlay" ]]; then
+    MOUNT_STATUS="IMAGE_OVERLAY"
+    MOUNT_NOTES="Overlay filesystem detected without bind flag; repository likely originates from the container image (e.g., internal Gradio code)."
+  else
+    MOUNT_STATUS="STANDARD_FS"
+    MOUNT_NOTES="Mounted on ${MNT_FSTYPE} without 'bind'; host mapping uncertain—confirm repository freshness manually."
+  fi
+  log_info "Mount classification: ${MOUNT_STATUS} (${MOUNT_NOTES})"
+fi
+
 ORIGIN_URL="$(git -C "${GIT_ROOT}" remote get-url origin 2>/dev/null || true)"
 if [[ -n "${ORIGIN_URL}" ]]; then
   log_info "Origin remote: ${ORIGIN_URL}"
@@ -147,4 +183,13 @@ else
 fi
 
 # Provide a succinct summary to help operators verify the mapping at a glance.
-log_info "Repository mapping verification completed successfully."
+print_executive_header
+print_kv "Path" "${GIT_ROOT}"
+print_kv "Mount" "${MOUNT_STATUS}"
+print_kv "Remote" "${ORIGIN_URL:-<none>}"
+print_kv "Branch" "${CURRENT_BRANCH}"
+print_kv "Commit" "${CURRENT_COMMIT}"
+print_kv "Write Test" "$([[ -w "${GIT_ROOT}" ]] && echo "Writable" || echo "Read-only")"
+print_kv "Notes" "${MOUNT_NOTES}"
+print_divider
+log_info "Repository mapping verification completed successfully. Executive screen above reflects current state."
