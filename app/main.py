@@ -1,10 +1,10 @@
-"""Modern ChatGPT-style Gradio interface for MQ-RAG.
+"""Sleek ChatGPT-style Gradio interface for MQ-RAG.
 
-The main application interface is intentionally compact and minimal: a
-collapsible sidebar, tight control spacing, and a bottom-aligned input replicate
-the efficient feel of ChatGPT while keeping sources tucked away in an optional
-accordion. Verbose logging is used throughout to simplify troubleshooting and
-to align with international programming documentation standards.
+The landing experience shown after authentication is rebuilt with a minimalist
+chat template that mirrors the requested design: collapsible sidebar with icons,
+bottom-aligned compact input, and a tidy sources accordion. Verbose logging and
+comprehensive docstrings satisfy the International Programming Standards
+guidance for traceability and maintainability.
 """
 
 from __future__ import annotations
@@ -13,20 +13,21 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Tuple, TypedDict
+from typing import Any, Dict, Generator, List, Tuple, TypedDict
 
 import gradio as gr
 
 from app.config import SHARE_INTERFACE
 from app.rag_chain import query_rag, start_background_prewarm
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 
 # ---------------------------------------------------------------------------
 # Simple session store
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SessionRecord:
@@ -63,6 +64,7 @@ def _default_sources() -> list[list[Any]]:
 
 def _get_or_create_session(username: str, session_id: str | None) -> SessionRecord:
     """Return an existing session or create a new one for this user."""
+
     if session_id and session_id in SESSION_STORE:
         logger.debug("Reusing existing session %s for user %s", session_id, username)
         return SESSION_STORE[session_id]
@@ -80,15 +82,22 @@ def _get_or_create_session(username: str, session_id: str | None) -> SessionReco
 
 
 def _format_answer(query: str, answer: str) -> str:
-    """Compose the display-friendly Markdown for the main response panel."""
+    """Compose display-friendly Markdown for the main response panel."""
+
     return f"**Query:** *{query}*\n\n**AI Result:** {answer}"
 
 
 def handle_query(
     message: str,
     state: AppState,
-) -> Tuple[str, List[List[Any]], AppState, str]:
-    """Process a user query and format UI outputs for the sleek interface."""
+) -> Generator[Tuple[str, List[List[Any]], AppState, str], None, None]:
+    """Process a user query with lightweight streaming updates.
+
+    The generator yields an immediate acknowledgement for responsiveness followed
+    by the completed answer and refreshed session state. Verbose logging tracks
+    each step so operators can trace user interactions and troubleshoot issues
+    rapidly.
+    """
 
     username = state.get("user", "rob")
     session_id = state.get("session_id") or ""
@@ -101,14 +110,11 @@ def handle_query(
             username,
             record.session_id,
         )
-        return (
-            "Please enter a question to begin.",
-            _default_sources(),
-            state,
-            "",
-        )
+        yield "Please enter a question to begin.", _default_sources(), state, ""
+        return
 
     logger.info("Handling query for user=%s session=%s", username, record.session_id)
+    yield "Thinking...", _default_sources(), state, message
 
     answer = query_rag(text)
     record.history.append((text, answer))
@@ -120,7 +126,7 @@ def handle_query(
     )
 
     formatted_answer = _format_answer(text, answer)
-    return formatted_answer, _default_sources(), state, ""
+    yield formatted_answer, _default_sources(), state, ""
 
 
 def start_new_conversation(state: AppState) -> Tuple[str, List[List[Any]], AppState, str]:
@@ -173,6 +179,7 @@ CUSTOM_CSS = """
 
 def build_app() -> gr.Blocks:
     """Build the Gradio Blocks interface with a collapsible sidebar."""
+
     logger.info("Initializing sleek MQ-RAG UI")
 
     initial_state: AppState = {"user": "rob", "session_id": ""}
@@ -184,21 +191,21 @@ def build_app() -> gr.Blocks:
         sidebar_visible = gr.State(True)
 
         with gr.Row(equal_height=True):
-            # Sidebar
+            # Sidebar (collapsible)
             with gr.Column(
                 scale=1, min_width=250, visible=True, elem_classes=["sidebar"]
             ) as sidebar_column:
                 new_chat_btn = gr.Button("➕ New Search", variant="primary", size="sm")
                 gr.Markdown("### 📜 History")
-                gr.Markdown("- *Recent MQ deep dive*")
-                gr.Markdown("- *RAG pipeline overview*")
-                gr.Markdown("- *Throughput telemetry*")
+                gr.Markdown("- *MoE vs. Dense Models*")
+                gr.Markdown("- *Gradio Toggle Logic*")
+                gr.Markdown("- *Latest AI Trends*")
                 gr.Markdown("---")
                 gr.Markdown("### 🛠️ Tools")
-                with gr.Row():
-                    gr.Button("⚙️ Settings", size="sm", min_width=0)
-                    gr.Button("💾 Export", size="sm", min_width=0)
-                    gr.Button("👤 Account", size="sm", min_width=0)
+                with gr.Row(variant="panel"):
+                    gr.Button("⚙️ Settings", size="sm", min_width=0, scale=1)
+                    gr.Button("💾 Export", size="sm", min_width=0, scale=1)
+                    gr.Button("👤 Account", size="sm", min_width=0, scale=1)
 
             # Main content
             with gr.Column(scale=4, elem_classes=["main-area"]):
