@@ -4,7 +4,7 @@
 # The script also emits an Executive Verification screen summarizing whether the container is using the expected
 # host-mounted Git repository or relying on internal image code (e.g., bundled Gradio sources).
 # Usage:
-#   ./scripts/verify_repo_container_mapping.sh [--repo-path PATH] [--expected-remote URL] [--expected-branch NAME] [--trace]
+#   ./scripts/verify_repo_container_mapping.sh [--repo-path PATH] [--expected-remote URL] [--expected-branch NAME] [--container-name NAME] [--container-repo-path PATH] [--trace]
 # Notes:
 #   - Verbose logging is always enabled; add --trace to also emit shell tracing (set -x).
 #   - The script reports mount metadata, Git remotes/branches, and performs an optional write test inside the repository.
@@ -63,6 +63,9 @@ Options:
   --repo-path PATH       Repository path inside the container (default: current directory).
   --expected-remote URL  Optional expected remote URL; fails if the origin does not match.
   --expected-branch NAME Optional expected branch name; fails if HEAD is on a different branch.
+  --container-name NAME  Optional running container to verify via docker exec.
+  --container-repo-path PATH
+                         Repository path inside the running container (defaults to detected host path).
   --trace               Enable shell tracing (set -x) for deep debugging.
   -h, --help             Show this help text.
 USAGE
@@ -71,6 +74,8 @@ USAGE
 REPO_PATH="$(pwd)"
 EXPECTED_REMOTE=""
 EXPECTED_BRANCH=""
+CONTAINER_NAME=""
+CONTAINER_REPO_PATH=""
 ENABLE_TRACE=false
 
 # Parse arguments using a simple loop to avoid external dependencies while keeping behavior explicit.
@@ -86,6 +91,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --expected-branch)
       EXPECTED_BRANCH="$2"
+      shift 2
+      ;;
+    --container-name)
+      CONTAINER_NAME="$2"
+      shift 2
+      ;;
+    --container-repo-path)
+      CONTAINER_REPO_PATH="$2"
       shift 2
       ;;
     --trace)
@@ -197,6 +210,106 @@ fi
 
 CURRENT_COMMIT="$(git -C "${GIT_ROOT}" rev-parse HEAD)"
 log_info "HEAD commit: ${CURRENT_COMMIT}"
+
+##########
+# Docker-based verification to ensure the running container sees the freshest repository content.
+# This block is optional and executes only when a container name is provided.
+##########
+
+run_docker_cmd() {
+  local description="$1"
+  shift
+  local cmd=("$@")
+
+  log_info "[docker] ${description}: ${cmd[*]}"
+  if ! "${cmd[@]}"; then
+    log_error "[docker] ${description} failed"
+    return 1
+  fi
+}
+
+if [[ -n "${CONTAINER_NAME}" ]]; then
+  if ! command -v docker >/dev/null 2>&1; then
+    log_error "Docker CLI is not available; cannot validate container state."
+    exit 1
+  fi
+
+  log_info "Container verification requested for: ${CONTAINER_NAME}"
+
+  if ! docker ps --format '{{.Names}}' | grep -Fxq "${CONTAINER_NAME}"; then
+    log_error "Container '${CONTAINER_NAME}' is not running; cannot verify in-container repository mapping."
+    exit 1
+  fi
+
+  CONTAINER_REPO_PATH=${CONTAINER_REPO_PATH:-${GIT_ROOT}}
+  log_info "Using container repo path: ${CONTAINER_REPO_PATH}"
+
+  # Capture mount information directly from the Docker daemon for ground truth on bind/volume mappings.
+  if docker inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+    CONTAINER_MOUNTS=$(docker inspect "${CONTAINER_NAME}" --format '{{range .Mounts}}{{printf "%s:%s (%s);" .Source .Destination .Mode}}{{end}}')
+    if [[ -n "${CONTAINER_MOUNTS}" ]]; then
+      log_info "[docker] Mounts for ${CONTAINER_NAME}: ${CONTAINER_MOUNTS}"
+    else
+      log_warn "[docker] No mounts reported for ${CONTAINER_NAME}."
+    fi
+  else
+    log_warn "[docker] Unable to inspect container '${CONTAINER_NAME}'."
+  fi
+
+  # Validate that the repository path is visible and usable inside the container.
+  run_docker_cmd "Check repository visibility" docker exec "${CONTAINER_NAME}" test -d "${CONTAINER_REPO_PATH}"
+
+  DOCKER_GIT_ROOT="$(docker exec "${CONTAINER_NAME}" git -C "${CONTAINER_REPO_PATH}" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -z "${DOCKER_GIT_ROOT}" ]]; then
+    log_error "[docker] Git repository not detected at ${CONTAINER_REPO_PATH} inside ${CONTAINER_NAME}."
+    exit 1
+  fi
+  log_info "[docker] Git root inside container: ${DOCKER_GIT_ROOT}"
+
+  DOCKER_HEAD_COMMIT="$(docker exec "${CONTAINER_NAME}" git -C "${CONTAINER_REPO_PATH}" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -z "${DOCKER_HEAD_COMMIT}" ]]; then
+    log_error "[docker] Unable to read HEAD commit inside container at ${CONTAINER_REPO_PATH}."
+    exit 1
+  fi
+  log_info "[docker] HEAD commit inside container: ${DOCKER_HEAD_COMMIT}"
+
+  if [[ "${DOCKER_HEAD_COMMIT}" != "${CURRENT_COMMIT}" ]]; then
+    log_warn "[docker] Host HEAD (${CURRENT_COMMIT}) and container HEAD (${DOCKER_HEAD_COMMIT}) differ; container may be outdated."
+  else
+    log_info "[docker] Host and container HEAD commits match."
+  fi
+
+  # Compare a file checksum to ensure the container is reading the latest file contents, not stale layers.
+  TARGET_FILE="${GIT_ROOT}/README.md"
+  if [[ -f "${TARGET_FILE}" ]]; then
+    HOST_CHECKSUM=$(sha256sum "${TARGET_FILE}" | awk '{print $1}')
+    log_info "[docker] Host checksum for README.md: ${HOST_CHECKSUM}"
+
+    DOCKER_TARGET_FILE="${CONTAINER_REPO_PATH}/README.md"
+    DOCKER_CHECKSUM=$(docker exec "${CONTAINER_NAME}" sha256sum "${DOCKER_TARGET_FILE}" 2>/dev/null | awk '{print $1}')
+    if [[ -n "${DOCKER_CHECKSUM}" ]]; then
+      log_info "[docker] Container checksum for README.md: ${DOCKER_CHECKSUM}"
+      if [[ "${HOST_CHECKSUM}" != "${DOCKER_CHECKSUM}" ]]; then
+        log_warn "[docker] README.md checksum mismatch; container may not reflect the latest host files."
+      else
+        log_info "[docker] README.md checksum matches; container sees the updated file content."
+      fi
+    else
+      log_warn "[docker] Unable to compute checksum for ${DOCKER_TARGET_FILE} inside container; file may be missing."
+    fi
+  else
+    log_warn "Host README.md not found; skipping checksum comparison."
+  fi
+
+  # Optional write test within the container to verify mount writability mirrors host behavior.
+  TEMP_FILE_NAME="/tmp/repo_write_check_$$.txt"
+  if docker exec "${CONTAINER_NAME}" sh -c "cd '${CONTAINER_REPO_PATH}' && touch '${TEMP_FILE_NAME}'"; then
+    log_info "[docker] Write test inside container succeeded at ${CONTAINER_REPO_PATH}/${TEMP_FILE_NAME}"
+    docker exec "${CONTAINER_NAME}" rm -f "${TEMP_FILE_NAME}" || log_warn "[docker] Cleanup of temporary file inside container failed."
+  else
+    log_warn "[docker] Write test inside container failed; mount may be read-only."
+  fi
+fi
 
 # Confirm the working tree is readable and writable, which indicates the bind mount is functioning.
 if [[ -w "${GIT_ROOT}" ]]; then
