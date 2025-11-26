@@ -442,7 +442,7 @@ def build_app() -> gr.Blocks:
                         elem_classes=["section-subhead"],
                     )
                     gr.Markdown(
-                        "**FAQ**\n- How do I refresh the index? Use the Docs panel.\n- Where are logs stored? Check the Logs tab after a search.\n- Need support? File a ticket via the ops channel.",
+                        "**FAQ**\n- How do I open the UI? Open at http://localhost:7860.\n- How do I refresh the index? Use the Docs panel.\n- Where are logs stored? Check the Logs tab after a search.\n- Need support? File a ticket via the ops channel.",
                         elem_classes=["placeholder-card"],
                     )
 
@@ -497,6 +497,8 @@ logger.info("Starting background model prewarm")
 start_background_prewarm()
 
 if __name__ == "__main__":
+    launch_url = "http://localhost:7860"
+    logger.info("Launching MQ-RAG app at %s", launch_url)
     app.launch(
         share=SHARE_INTERFACE,
         server_name="0.0.0.0",
