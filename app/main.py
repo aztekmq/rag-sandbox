@@ -204,7 +204,9 @@ def build_app() -> gr.Blocks:
     """Build the Gradio Blocks interface with a fixed sidebar and tabs."""
 
     logger.info("Initializing MQ-RAG dashboard UI")
-    logger.debug("Preparing initial state and CSS for UI construction")
+    logger.debug(
+        "Preparing initial state and CSS for UI construction; avoiding deprecated Row scaling"
+    )
 
     initial_state: AppState = {"user": "admin", "session_id": ""}
     combined_css = CUSTOM_CSS_PATH.read_text() + "\n" + INLINE_CSS
@@ -219,10 +221,14 @@ def build_app() -> gr.Blocks:
         sidebar_visible = gr.State(True)
 
         logger.debug(
-            "Assembling layout rows and sidebar components with Gradio %s (no row scaling)",
+            "Assembling layout rows and sidebar components with Gradio %s (Row scale unsupported)",
             gr.__version__,
         )
-        with gr.Row(variant="panel", elem_classes=["layout-row", "input-row"]):
+        with gr.Row(
+            variant="panel",
+            elem_classes=["layout-row", "input-row"],
+            equal_height=True,
+        ):
             # Sidebar (collapsible)
             with gr.Column(
                 scale=1,
