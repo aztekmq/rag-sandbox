@@ -1,10 +1,10 @@
-"""Sleek ChatGPT-style Gradio interface for MQ-RAG.
+"""Gradio UI with fixed sidebar, KPI strip, and tabbed results view.
 
-The landing experience shown after authentication is rebuilt with a minimalist
-chat template that mirrors the requested design: collapsible sidebar with icons,
-bottom-aligned compact input, and a tidy sources accordion. Verbose logging and
-comprehensive docstrings satisfy the International Programming Standards
-guidance for traceability and maintainability.
+This module rebuilds the Blocks layout to match the target operations dashboard
+style described in the project manifest. A left-hand sidebar surfaces session
+controls and recent history, while the main canvas stacks KPIs, query input, and
+results tabs. Verbose logging is preserved to simplify debugging and satisfy
+international programming standards for observability.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Generator, List, Tuple, TypedDict
 
 import gradio as gr
@@ -38,6 +39,18 @@ class SessionRecord:
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
+    def render_history(self, limit: int = 6) -> str:
+        """Render recent history as Markdown bullet items for the sidebar."""
+
+        if not self.history:
+            return "*No turns yet. Ask your first question to start a trail.*"
+
+        lines: list[str] = ["### Recent Searches"]
+        for idx, (query, _) in enumerate(self.history[-limit:], start=1):
+            truncated = (query[:60] + "…") if len(query) > 60 else query
+            lines.append(f"{idx}. {truncated}")
+        return "\n".join(lines)
+
 
 class AppState(TypedDict):
     """Typed dictionary stored in the Gradio state container."""
@@ -54,6 +67,10 @@ DEFAULT_SOURCES: list[list[Any]] = [
         None,
     ]
 ]
+DEFAULT_LOG_MESSAGE = "Awaiting first query."
+
+ASSETS_DIR = Path(__file__).parent / "assets"
+CUSTOM_CSS_PATH = ASSETS_DIR / "custom.css"
 
 
 def _default_sources() -> list[list[Any]]:
@@ -90,16 +107,18 @@ def _format_answer(query: str, answer: str) -> str:
 def handle_query(
     message: str,
     state: AppState,
-) -> Generator[Tuple[str, List[List[Any]], AppState, str], None, None]:
+) -> Generator[
+    Tuple[str, List[List[Any]], str, str, AppState, str, str], None, None
+]:
     """Process a user query with lightweight streaming updates.
 
     The generator yields an immediate acknowledgement for responsiveness followed
-    by the completed answer and refreshed session state. Verbose logging tracks
-    each step so operators can trace user interactions and troubleshoot issues
-    rapidly.
+    by the completed answer, refreshed session state, and sidebar history. Verbose
+    logging tracks each step so operators can trace user interactions and
+    troubleshoot issues rapidly.
     """
 
-    username = state.get("user", "rob")
+    username = state.get("user", "admin")
     session_id = state.get("session_id") or ""
     record = _get_or_create_session(username, session_id)
 
@@ -110,11 +129,21 @@ def handle_query(
             username,
             record.session_id,
         )
-        yield "Please enter a question to begin.", _default_sources(), state, ""
+        sidebar_md = record.render_history()
+        yield (
+            "Please enter a question to begin.",
+            _default_sources(),
+            DEFAULT_LOG_MESSAGE,
+            "",
+            state,
+            "",
+            sidebar_md,
+        )
         return
 
     logger.info("Handling query for user=%s session=%s", username, record.session_id)
-    yield "Thinking...", _default_sources(), state, message
+    sidebar_md = record.render_history()
+    yield "Thinking...", _default_sources(), "Query received...", text, state, message, sidebar_md
 
     answer = query_rag(text)
     record.history.append((text, answer))
@@ -126,16 +155,20 @@ def handle_query(
     )
 
     formatted_answer = _format_answer(text, answer)
-    yield formatted_answer, _default_sources(), state, ""
+    sidebar_md = record.render_history()
+    yield formatted_answer, _default_sources(), "Completed without errors.", answer, state, "", sidebar_md
 
 
-def start_new_conversation(state: AppState) -> Tuple[str, List[List[Any]], AppState, str]:
+def start_new_conversation(
+    state: AppState,
+) -> Tuple[str, List[List[Any]], str, str, AppState, str, str]:
     """Reset the chat for a fresh session while retaining the username."""
 
-    logger.info("Starting a new conversation for user=%s", state.get("user", "rob"))
+    logger.info("Starting a new conversation for user=%s", state.get("user", "admin"))
     state["session_id"] = ""
     greeting = "The AI is ready. Enter your query below."
-    return greeting, _default_sources(), state, ""
+    sidebar_md = SessionRecord(session_id="temp").render_history()
+    return greeting, _default_sources(), DEFAULT_LOG_MESSAGE, "", state, "", sidebar_md
 
 
 def toggle_sidebar(current_visibility: bool) -> Tuple[bool, gr.update]:
@@ -150,25 +183,15 @@ def toggle_sidebar(current_visibility: bool) -> Tuple[bool, gr.update]:
 # Minimalist CSS and layout helpers
 # ---------------------------------------------------------------------------
 
-CUSTOM_CSS = """
-.gradio-container { padding: 0 !important; }
-.svelte-17w9n8 { padding: 8px !important; }
-
-/* Sidebar styling */
-.sidebar { background: #f9f9fb; border-right: 1px solid #e6e8ec; gap: 12px; }
-.sidebar .gr-button { justify-content: flex-start; }
-.sidebar .gr-button-primary { width: 100%; }
-.sidebar .gr-markdown { margin: 0; }
-
-/* Main area */
-.main-area { padding: 12px 16px; gap: 12px; }
-.response-box label { display: none; }
-.response-box { min-height: 140px; }
-.toggle-icon button { padding: 4px 10px; line-height: 1; font-size: 1.2em; }
-.input-row { align-items: center; }
-
-/* Input aesthetics */
-.input-row .gr-textbox { margin-top: 0; }
+INLINE_CSS = """
+.layout-row { align-items: stretch; gap: 16px !important; }
+.sidebar-card { gap: 8px !important; }
+.sidebar-footer { color: #7a6c5d; font-size: 13px; }
+.kpi-strip { gap: 10px !important; }
+.kpi-card { min-width: 150px; }
+.result-tabs .gr-panel { background: transparent; border: none; box-shadow: none; }
+.result-tabs .gr-tabitem { padding: 0 !important; }
+.input-panel .gr-textbox { margin-top: 0; }
 """
 
 
@@ -178,69 +201,129 @@ CUSTOM_CSS = """
 
 
 def build_app() -> gr.Blocks:
-    """Build the Gradio Blocks interface with a collapsible sidebar."""
+    """Build the Gradio Blocks interface with a fixed sidebar and tabs."""
 
-    logger.info("Initializing sleek MQ-RAG UI")
+    logger.info("Initializing MQ-RAG dashboard UI")
 
-    initial_state: AppState = {"user": "rob", "session_id": ""}
+    initial_state: AppState = {"user": "admin", "session_id": ""}
+    combined_css = CUSTOM_CSS_PATH.read_text() + "\n" + INLINE_CSS
 
     with gr.Blocks(
-        css=CUSTOM_CSS, theme=gr.themes.Soft(), analytics_enabled=False, title="AI Assistant"
+        css=combined_css,
+        theme=gr.themes.Soft(),
+        analytics_enabled=False,
+        title="MQ-RAG Assistant",
     ) as demo:
         app_state = gr.State(initial_state)
         sidebar_visible = gr.State(True)
 
-        with gr.Row(equal_height=True):
+        with gr.Row(elem_classes=["layout-row"]):
             # Sidebar (collapsible)
             with gr.Column(
-                scale=1, min_width=250, visible=True, elem_classes=["sidebar"]
+                scale=1,
+                min_width=260,
+                visible=True,
+                elem_classes=["nav-rail", "panel", "sidebar-card"],
             ) as sidebar_column:
+                gr.Markdown("## MQ-RAG\nOps Desk")
                 new_chat_btn = gr.Button("➕ New Search", variant="primary", size="sm")
-                gr.Markdown("### 📜 History")
-                gr.Markdown("- *MoE vs. Dense Models*")
-                gr.Markdown("- *Gradio Toggle Logic*")
-                gr.Markdown("- *Latest AI Trends*")
-                gr.Markdown("---")
-                gr.Markdown("### 🛠️ Tools")
-                with gr.Row(variant="panel"):
-                    gr.Button("⚙️ Settings", size="sm", min_width=0, scale=1)
-                    gr.Button("💾 Export", size="sm", min_width=0, scale=1)
-                    gr.Button("👤 Account", size="sm", min_width=0, scale=1)
+                gr.Markdown("**Role:** Admin\n\n**Environment:** Sandbox")
+
+                gr.Markdown("### Navigation", elem_classes=["section-title"])
+                with gr.Row(elem_classes=["nav-buttons"]):
+                    gr.Button("🧭 Search", size="sm")
+                    gr.Button("📂 Docs", size="sm")
+                    gr.Button("❓ Help", size="sm")
+
+                history_panel = gr.Markdown(
+                    value="*No turns yet. Ask your first question to start a trail.*",
+                    elem_classes=["history-panel"],
+                )
+
+                gr.Markdown(
+                    "---\n**Tip:** Toggle the menu with the ☰ button if you need more space.",
+                    elem_classes=["sidebar-footer"],
+                )
 
             # Main content
-            with gr.Column(scale=4, elem_classes=["main-area"]):
-                toggle_icon = gr.Button(
-                    "☰", size="sm", min_width=50, elem_classes=["toggle-icon"]
-                )
-
-                main_output = gr.Markdown(
-                    label="Search Result",
-                    value="The AI is ready. Enter your query below.",
-                    elem_classes=["response-box"],
-                )
-
-                with gr.Accordion("📚 View Sources & Context", open=False):
-                    source_output = gr.Dataframe(
-                        headers=["Source", "Snippet", "Relevance"],
-                        datatype=["str", "str", "number"],
-                        row_count=3,
-                        col_count=(3, "fixed"),
-                        interactive=False,
-                        value=_default_sources(),
+            with gr.Column(scale=4, elem_classes=["main-area", "center-stage"]):
+                with gr.Row(justify="between"):
+                    gr.Markdown("### MQ-RAG Assistant")
+                    toggle_icon = gr.Button(
+                        "☰",
+                        size="sm",
+                        min_width=50,
+                        elem_classes=["toggle-icon"],
+                        variant="secondary",
                     )
 
-                with gr.Row(variant="panel", elem_classes=["input-row"]):
+                gr.Markdown(
+                    "Welcome back, admin. Ask a question to search the knowledge base or review recent answers in the tabs below.",
+                    elem_classes=["greeting-subtitle"],
+                )
+
+                with gr.Row(elem_classes=["kpi-strip"]):
+                    gr.Markdown("#### Sessions\n0 active")
+                    gr.Markdown("#### Docs Indexed\n2 indexed")
+                    gr.Markdown("#### Latency\n< 5s")
+                    gr.Markdown("#### Model\nArctic")
+
+                with gr.Row(variant="panel", elem_classes=["input-panel"]):
                     query_input = gr.Textbox(
-                        lines=1,
+                        lines=2,
                         placeholder="Ask the AI a question...",
                         container=False,
                         scale=4,
+                        elem_id="query-input",
                     )
-                    search_btn = gr.Button("Send", variant="primary", scale=1, size="sm")
+                    search_btn = gr.Button(
+                        "Send",
+                        variant="primary",
+                        scale=1,
+                        size="sm",
+                        elem_id="submit-button",
+                    )
+
+                with gr.Tabs(elem_classes=["result-tabs"]):
+                    with gr.Tab("Answer"):
+                        answer_panel = gr.Markdown(
+                            label="Search Result",
+                            value="The AI is ready. Enter your query below.",
+                            elem_classes=["response-box"],
+                        )
+
+                    with gr.Tab("Sources"):
+                        source_output = gr.Dataframe(
+                            headers=["Source", "Snippet", "Relevance"],
+                            datatype=["str", "str", "number"],
+                            row_count=3,
+                            col_count=(3, "fixed"),
+                            interactive=False,
+                            value=_default_sources(),
+                        )
+
+                    with gr.Tab("Logs"):
+                        log_panel = gr.Markdown(DEFAULT_LOG_MESSAGE)
+
+                    with gr.Tab("Raw"):
+                        raw_panel = gr.Textbox(
+                            value="",
+                            label="Raw Response",
+                            interactive=False,
+                            lines=6,
+                        )
 
         # Wiring
         search_inputs = [query_input, app_state]
-        search_outputs = [main_output, source_output, app_state, query_input]
+        search_outputs = [
+            answer_panel,
+            source_output,
+            log_panel,
+            raw_panel,
+            app_state,
+            query_input,
+            history_panel,
+        ]
 
         search_btn.click(fn=handle_query, inputs=search_inputs, outputs=search_outputs)
         query_input.submit(fn=handle_query, inputs=search_inputs, outputs=search_outputs)
@@ -248,7 +331,7 @@ def build_app() -> gr.Blocks:
         new_chat_btn.click(
             fn=start_new_conversation,
             inputs=[app_state],
-            outputs=[main_output, source_output, app_state, query_input],
+            outputs=search_outputs,
         )
 
         toggle_icon.click(
