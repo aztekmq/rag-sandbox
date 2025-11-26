@@ -222,7 +222,7 @@ def build_app() -> gr.Blocks:
             "Assembling layout rows and sidebar components with Gradio %s (no row scaling)",
             gr.__version__,
         )
-        with gr.Row(elem_classes=["layout-row"]):
+        with gr.Row(variant="panel", elem_classes=["layout-row", "input-row"]):
             # Sidebar (collapsible)
             with gr.Column(
                 scale=1,
