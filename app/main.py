@@ -195,6 +195,26 @@ INLINE_CSS = """
 """
 
 
+def _create_row(**kwargs: Any) -> gr.Row:
+    """Return a Gradio row while filtering unsupported keyword arguments.
+
+    Gradio 4.x removed the ``scale`` argument from :class:`gr.Row`. Passing it
+    now raises a ``TypeError`` similar to ``Row.__init__() got an unexpected
+    keyword argument 'scale'``. This helper defensively strips the key, logs the
+    cleanup for observability, and constructs the row with the remaining
+    options. This approach keeps the layout code concise while staying
+    compatible with the current library contract.
+    """
+
+    filtered_kwargs = dict(kwargs)
+    if "scale" in filtered_kwargs:
+        logger.warning(
+            "Removing unsupported 'scale' from gr.Row args: %s", filtered_kwargs
+        )
+        filtered_kwargs.pop("scale")
+    return gr.Row(**filtered_kwargs)
+
+
 # ---------------------------------------------------------------------------
 # UI assembly
 # ---------------------------------------------------------------------------
@@ -224,7 +244,7 @@ def build_app() -> gr.Blocks:
             "Assembling layout rows and sidebar components with Gradio %s (Row scale unsupported)",
             gr.__version__,
         )
-        with gr.Row(
+        with _create_row(
             variant="panel",
             elem_classes=["layout-row", "input-row"],
             equal_height=True,
@@ -241,7 +261,7 @@ def build_app() -> gr.Blocks:
                 gr.Markdown("**Role:** Admin\n\n**Environment:** Sandbox")
 
                 gr.Markdown("### Navigation", elem_classes=["section-title"])
-                with gr.Row(elem_classes=["nav-buttons"]):
+                with _create_row(elem_classes=["nav-buttons"]):
                     gr.Button("🧭 Search", size="sm")
                     gr.Button("📂 Docs", size="sm")
                     gr.Button("❓ Help", size="sm")
@@ -258,7 +278,7 @@ def build_app() -> gr.Blocks:
 
             # Main content
             with gr.Column(scale=4, elem_classes=["main-area", "center-stage"]):
-                with gr.Row(justify="between"):
+                with _create_row(justify="between"):
                     gr.Markdown("### MQ-RAG Assistant")
                     toggle_icon = gr.Button(
                         "☰",
@@ -273,14 +293,14 @@ def build_app() -> gr.Blocks:
                     elem_classes=["greeting-subtitle"],
                 )
 
-                with gr.Row(elem_classes=["kpi-strip"]):
+                with _create_row(elem_classes=["kpi-strip"]):
                     gr.Markdown("#### Sessions\n0 active")
                     gr.Markdown("#### Docs Indexed\n2 indexed")
                     gr.Markdown("#### Latency\n< 5s")
                     gr.Markdown("#### Model\nArctic")
 
                 logger.debug("Binding input row without deprecated row scale arguments")
-                with gr.Row(elem_classes=["input-panel"], equal_height=True):
+                with _create_row(elem_classes=["input-panel"], equal_height=True):
                     query_input = gr.Textbox(
                         lines=2,
                         placeholder="Ask the AI a question...",
