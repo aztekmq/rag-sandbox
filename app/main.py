@@ -97,6 +97,7 @@ class AppState(TypedDict):
 
     user: str
     session_id: str
+    active_view: str
 
 
 SESSION_STORE: Dict[str, SessionRecord] = {}
@@ -219,6 +220,34 @@ def toggle_sidebar(current_visibility: bool) -> Tuple[bool, gr.update]:
     return new_state, gr.Column.update(visible=new_state)
 
 
+def switch_view(
+    target_view: str, current_view: str
+) -> Tuple[str, gr.update, gr.update, gr.update]:
+    """Toggle visible panels based on the requested target view.
+
+    The helper centralizes navigation logic for the sidebar buttons so that
+    Search, Docs, and Help panels can be shown or hidden without modifying
+    backend behavior. It logs both the requested target and the resulting state
+    to support detailed troubleshooting sessions.
+    """
+
+    normalized_target = (target_view or "search").lower()
+    allowed_views = {"search", "docs", "help"}
+    resolved_view = normalized_target if normalized_target in allowed_views else "search"
+    logger.info(
+        "Switching view from %s to %s (resolved target=%s)",
+        current_view,
+        target_view,
+        resolved_view,
+    )
+
+    search_visibility = gr.Column.update(visible=resolved_view == "search")
+    docs_visibility = gr.Column.update(visible=resolved_view == "docs")
+    help_visibility = gr.Column.update(visible=resolved_view == "help")
+
+    return resolved_view, search_visibility, docs_visibility, help_visibility
+
+
 # ---------------------------------------------------------------------------
 # Minimalist CSS and layout helpers
 # ---------------------------------------------------------------------------
@@ -268,7 +297,7 @@ def build_app() -> gr.Blocks:
         "Preparing initial state and CSS for UI construction; avoiding deprecated Row scaling"
     )
 
-    initial_state: AppState = {"user": "admin", "session_id": ""}
+    initial_state: AppState = {"user": "admin", "session_id": "", "active_view": "search"}
     combined_css = CUSTOM_CSS_PATH.read_text() + "\n" + INLINE_CSS
 
     with gr.Blocks(
@@ -279,6 +308,7 @@ def build_app() -> gr.Blocks:
     ) as demo:
         app_state = gr.State(initial_state)
         sidebar_visible = gr.State(True)
+        active_view_state = gr.State(initial_state["active_view"])
 
         logger.debug(
             "Assembling layout rows and sidebar components with Gradio %s (Row scale unsupported)",
@@ -302,9 +332,9 @@ def build_app() -> gr.Blocks:
 
                 gr.Markdown("### Navigation", elem_classes=["section-title"])
                 with _create_row(elem_classes=["nav-buttons"]):
-                    gr.Button("🧭 Search", size="sm")
-                    gr.Button("📂 Docs", size="sm")
-                    gr.Button("❓ Help", size="sm")
+                    search_nav_btn = gr.Button("🧭 Search", size="sm")
+                    docs_nav_btn = gr.Button("📂 Docs", size="sm")
+                    help_nav_btn = gr.Button("❓ Help", size="sm")
 
                 history_panel = gr.Markdown(
                     value="*No turns yet. Ask your first question to start a trail.*",
@@ -318,8 +348,8 @@ def build_app() -> gr.Blocks:
 
             # Main content
             with gr.Column(scale=4, elem_classes=["main-area", "center-stage"]):
-                with _create_row(justify="between"):
-                    gr.Markdown("### MQ-RAG Assistant")
+                with _create_row(justify="between", elem_classes=["header-row"]):
+                    gr.Markdown("### MQ-RAG Assistant", elem_classes=["title-text"])
                     toggle_icon = gr.Button(
                         "☰",
                         size="sm",
@@ -328,62 +358,93 @@ def build_app() -> gr.Blocks:
                         variant="secondary",
                     )
 
+                with _create_row(elem_classes=["badge-row", "header-meta"]):
+                    gr.Markdown("<span class='badge accent-badge'>Live</span>", elem_classes=["header-badge"])
+                    gr.Markdown("<span class='badge light-badge'>Ops Dashboard</span>", elem_classes=["header-badge"])
+
                 gr.Markdown(
                     "Welcome back, admin. Ask a question to search the knowledge base or review recent answers in the tabs below.",
                     elem_classes=["greeting-subtitle"],
                 )
 
                 with _create_row(elem_classes=["kpi-strip"]):
-                    gr.Markdown("#### Sessions\n0 active")
-                    gr.Markdown("#### Docs Indexed\n2 indexed")
-                    gr.Markdown("#### Latency\n< 5s")
-                    gr.Markdown("#### Model\nArctic")
+                    gr.Markdown("#### Sessions\n0 active", elem_classes=["kpi-card"])
+                    gr.Markdown("#### Docs Indexed\n2 indexed", elem_classes=["kpi-card"])
+                    gr.Markdown("#### Latency\n< 5s", elem_classes=["kpi-card"])
+                    gr.Markdown("#### Model\nArctic", elem_classes=["kpi-card"])
 
                 logger.debug("Binding input row without deprecated row scale arguments")
-                with _create_row(elem_classes=["input-panel"], equal_height=True):
-                    query_input = gr.Textbox(
-                        lines=2,
-                        placeholder="Ask the AI a question...",
-                        container=False,
-                        scale=4,
-                        elem_id="query-input",
+                with gr.Column(elem_classes=["view-panel"], visible=True) as search_panel:
+                    gr.Markdown("### Search", elem_classes=["section-heading"])
+                    with _create_row(elem_classes=["input-panel"], equal_height=True):
+                        query_input = gr.Textbox(
+                            lines=2,
+                            placeholder="Ask the AI a question...",
+                            container=False,
+                            scale=4,
+                            elem_id="query-input",
+                        )
+                        search_btn = gr.Button(
+                            "Send",
+                            variant="primary",
+                            scale=1,
+                            size="sm",
+                            elem_id="submit-button",
+                        )
+
+                    with gr.Tabs(elem_classes=["result-tabs"]):
+                        with gr.Tab("Answer"):
+                            answer_panel = gr.Markdown(
+                                label="Search Result",
+                                value="The AI is ready. Enter your query below.",
+                                elem_classes=["response-box"],
+                            )
+
+                        with gr.Tab("Sources"):
+                            source_output = gr.Dataframe(
+                                headers=["Source", "Snippet", "Relevance"],
+                                datatype=["str", "str", "number"],
+                                row_count=3,
+                                col_count=(3, "fixed"),
+                                interactive=False,
+                                value=_default_sources(),
+                            )
+
+                        with gr.Tab("Logs"):
+                            log_panel = gr.Markdown(DEFAULT_LOG_MESSAGE)
+
+                        with gr.Tab("Raw"):
+                            raw_panel = gr.Textbox(
+                                value="",
+                                label="Raw Response",
+                                interactive=False,
+                                lines=6,
+                            )
+
+                with gr.Column(visible=False, elem_classes=["view-panel", "docs-panel"]) as docs_panel:
+                    gr.Markdown("### Manage Docs", elem_classes=["section-heading"])
+                    gr.Markdown(
+                        "Sync files, monitor ingestion, and review source freshness in one place.",
+                        elem_classes=["section-subhead"],
                     )
-                    search_btn = gr.Button(
-                        "Send",
-                        variant="primary",
-                        scale=1,
-                        size="sm",
-                        elem_id="submit-button",
+                    with _create_row(equal_height=True, elem_classes=["docs-actions"]):
+                        gr.File(label="Upload documents", file_types=[".pdf", ".txt"], type="filepath")
+                        gr.Button("Trigger Ingestion", variant="primary", size="sm")
+                    gr.Markdown(
+                        "**Recent activity**\n- Intake pending\n- No warnings logged",
+                        elem_classes=["placeholder-card"],
                     )
 
-                with gr.Tabs(elem_classes=["result-tabs"]):
-                    with gr.Tab("Answer"):
-                        answer_panel = gr.Markdown(
-                            label="Search Result",
-                            value="The AI is ready. Enter your query below.",
-                            elem_classes=["response-box"],
-                        )
-
-                    with gr.Tab("Sources"):
-                        source_output = gr.Dataframe(
-                            headers=["Source", "Snippet", "Relevance"],
-                            datatype=["str", "str", "number"],
-                            row_count=3,
-                            col_count=(3, "fixed"),
-                            interactive=False,
-                            value=_default_sources(),
-                        )
-
-                    with gr.Tab("Logs"):
-                        log_panel = gr.Markdown(DEFAULT_LOG_MESSAGE)
-
-                    with gr.Tab("Raw"):
-                        raw_panel = gr.Textbox(
-                            value="",
-                            label="Raw Response",
-                            interactive=False,
-                            lines=6,
-                        )
+                with gr.Column(visible=False, elem_classes=["view-panel", "help-panel"]) as help_panel:
+                    gr.Markdown("### Help", elem_classes=["section-heading"])
+                    gr.Markdown(
+                        "Common questions, runbooks, and contact options for the ops team.",
+                        elem_classes=["section-subhead"],
+                    )
+                    gr.Markdown(
+                        "**FAQ**\n- How do I refresh the index? Use the Docs panel.\n- Where are logs stored? Check the Logs tab after a search.\n- Need support? File a ticket via the ops channel.",
+                        elem_classes=["placeholder-card"],
+                    )
 
         # Wiring
         search_inputs = [query_input, app_state]
@@ -410,6 +471,22 @@ def build_app() -> gr.Blocks:
             fn=toggle_sidebar,
             inputs=[sidebar_visible],
             outputs=[sidebar_visible, sidebar_column],
+        )
+
+        search_nav_btn.click(
+            fn=lambda current_view: switch_view("search", current_view),
+            inputs=[active_view_state],
+            outputs=[active_view_state, search_panel, docs_panel, help_panel],
+        )
+        docs_nav_btn.click(
+            fn=lambda current_view: switch_view("docs", current_view),
+            inputs=[active_view_state],
+            outputs=[active_view_state, search_panel, docs_panel, help_panel],
+        )
+        help_nav_btn.click(
+            fn=lambda current_view: switch_view("help", current_view),
+            inputs=[active_view_state],
+            outputs=[active_view_state, search_panel, docs_panel, help_panel],
         )
 
     return demo
