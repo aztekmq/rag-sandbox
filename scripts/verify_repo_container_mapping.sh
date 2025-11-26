@@ -2,7 +2,8 @@
 # Purpose: Verify that the Git repository inside the Docker container is correctly mapped and usable.
 # The script emits verbose logs for each validation step to ease debugging and follows international scripting standards.
 # The script also emits an Executive Verification screen summarizing whether the container is using the expected
-# host-mounted Git repository or relying on internal image code (e.g., bundled Gradio sources).
+# host-mounted Git repository or relying on internal image code (e.g., bundled Gradio sources). Freshness checks
+# compare the working tree to its upstream to report whether the content is current.
 # Usage:
 #   ./scripts/verify_repo_container_mapping.sh [--repo-path PATH] [--expected-remote URL] [--expected-branch NAME] [--container-name NAME] [--container-repo-path PATH] [--trace]
 # Notes:
@@ -168,6 +169,10 @@ fi
 
 MOUNT_STATUS="UNKNOWN"
 MOUNT_NOTES="Mount inspection not available; cannot confirm whether the host repository is mapped."
+MOUNT_FSTYPE=""
+
+FRESHNESS_STATUS="NOT_EVALUATED"
+FRESHNESS_NOTES="Freshness check pending; upstream comparison has not run."
 
 classify_mount_from_findmnt() {
   local mount_info="$1"
@@ -177,12 +182,16 @@ classify_mount_from_findmnt() {
   fi
 
   read -r MNT_TARGET MNT_SOURCE MNT_FSTYPE MNT_OPTIONS <<<"${mount_info}"
+  MOUNT_FSTYPE="${MNT_FSTYPE}"
   if [[ "${MNT_OPTIONS}" == *"bind"* ]]; then
     MOUNT_STATUS="HOST_BIND"
     MOUNT_NOTES="Bind mount detected (options include 'bind'); repository should reflect the host Git checkout."
   elif [[ "${MNT_FSTYPE}" == "overlay" ]]; then
     MOUNT_STATUS="IMAGE_OVERLAY"
     MOUNT_NOTES="Overlay filesystem detected without bind flag; repository likely originates from the container image (e.g., internal Gradio code)."
+  elif [[ "${MNT_FSTYPE}" == "9p" ]]; then
+    MOUNT_STATUS="STANDARD_FS"
+    MOUNT_NOTES="Mounted on 9p without 'bind'; host mapping uncertain—automated freshness verification will run."
   else
     MOUNT_STATUS="STANDARD_FS"
     MOUNT_NOTES="Mounted on ${MNT_FSTYPE} without 'bind'; host mapping uncertain—confirm repository freshness manually."
@@ -219,6 +228,73 @@ fi
 
 CURRENT_COMMIT="$(git -C "${GIT_ROOT}" rev-parse HEAD)"
 log_info "HEAD commit: ${CURRENT_COMMIT}"
+
+assess_repository_freshness() {
+  local upstream_ref upstream_commit local_commit
+
+  log_info "Starting repository freshness assessment against upstream."
+  upstream_ref=$(git -C "${GIT_ROOT}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+
+  if [[ -z "${upstream_ref}" ]]; then
+    FRESHNESS_STATUS="NO_UPSTREAM"
+    FRESHNESS_NOTES="No upstream configured for current branch; cannot determine freshness against a remote."
+    log_warn "No upstream branch configured; skipping freshness comparison."
+    return
+  fi
+
+  log_info "Upstream reference detected: ${upstream_ref}"
+  if git -C "${GIT_ROOT}" fetch --quiet; then
+    log_info "Fetch from upstream completed to support freshness comparison."
+  else
+    FRESHNESS_STATUS="FETCH_FAILED"
+    FRESHNESS_NOTES="Fetch from upstream failed; freshness cannot be confirmed."
+    log_warn "Fetch from upstream failed; repository freshness remains indeterminate."
+    return
+  fi
+
+  upstream_commit=$(git -C "${GIT_ROOT}" rev-parse "${upstream_ref}" 2>/dev/null || true)
+  if [[ -z "${upstream_commit}" ]]; then
+    FRESHNESS_STATUS="UPSTREAM_UNKNOWN"
+    FRESHNESS_NOTES="Unable to resolve upstream commit for ${upstream_ref}."
+    log_warn "Unable to resolve upstream commit for ${upstream_ref}; skipping freshness comparison."
+    return
+  fi
+
+  local_commit="${CURRENT_COMMIT}"
+  log_info "Local commit for comparison: ${local_commit}"
+  log_info "Upstream commit for comparison: ${upstream_commit}"
+
+  if [[ "${local_commit}" == "${upstream_commit}" ]]; then
+    FRESHNESS_STATUS="FRESH"
+    FRESHNESS_NOTES="Local branch is aligned with upstream (${upstream_ref})."
+    log_info "Local branch matches upstream; repository is fresh."
+    return
+  fi
+
+  if git -C "${GIT_ROOT}" merge-base --is-ancestor "${local_commit}" "${upstream_commit}"; then
+    FRESHNESS_STATUS="BEHIND"
+    FRESHNESS_NOTES="Local branch is behind upstream ${upstream_ref}; pull to refresh."
+    log_warn "Local branch is behind upstream; repository may be stale."
+    return
+  fi
+
+  if git -C "${GIT_ROOT}" merge-base --is-ancestor "${upstream_commit}" "${local_commit}"; then
+    FRESHNESS_STATUS="AHEAD"
+    FRESHNESS_NOTES="Local branch is ahead of upstream ${upstream_ref}; consider pushing changes."
+    log_info "Local branch is ahead of upstream; repository contains unpublished commits."
+    return
+  fi
+
+  FRESHNESS_STATUS="DIVERGED"
+  FRESHNESS_NOTES="Local and upstream branches have diverged; manual reconciliation required."
+  log_warn "Local and upstream branches have diverged."
+}
+
+assess_repository_freshness
+
+if [[ "${MOUNT_FSTYPE}" == "9p" && "${FRESHNESS_STATUS}" != "NOT_EVALUATED" ]]; then
+  MOUNT_NOTES="Mounted on 9p without 'bind'; host mapping uncertain—freshness status: ${FRESHNESS_STATUS} (${FRESHNESS_NOTES})."
+fi
 
 ##########
 # Docker-based verification to ensure the running container sees the freshest repository content.
@@ -356,6 +432,8 @@ print_kv "Mount" "${MOUNT_STATUS}"
 print_kv_wrapped "Remote" "${ORIGIN_URL:-<none>}"
 print_kv "Branch" "${CURRENT_BRANCH}"
 print_kv_wrapped "Commit" "${CURRENT_COMMIT}"
+print_kv "Freshness" "${FRESHNESS_STATUS}"
+print_kv_wrapped "Freshness Notes" "${FRESHNESS_NOTES}"
 print_kv "Write Test" "$([[ -w "${GIT_ROOT}" ]] && echo "Writable" || echo "Read-only")"
 print_kv_wrapped "Notes" "${MOUNT_NOTES}"
 print_divider
