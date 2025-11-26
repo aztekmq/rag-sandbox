@@ -4,12 +4,11 @@
 # The script also emits an Executive Verification screen summarizing whether the container is using the expected
 # host-mounted Git repository or relying on internal image code (e.g., bundled Gradio sources).
 # Usage:
-#   ./scripts/verify_repo_container_mapping.sh [--repo-path PATH] [--expected-remote URL] [--expected-branch NAME]
+#   ./scripts/verify_repo_container_mapping.sh [--repo-path PATH] [--expected-remote URL] [--expected-branch NAME] [--trace]
 # Notes:
-#   - Verbose command tracing is enabled by default (set -x).
+#   - Verbose logging is always enabled; add --trace to also emit shell tracing (set -x).
 #   - The script reports mount metadata, Git remotes/branches, and performs an optional write test inside the repository.
 set -euo pipefail
-set -x
 
 # Initialize logging helpers with timestamps for consistent, debuggable output.
 log() {
@@ -23,10 +22,11 @@ log_warn() { log "WARN" "$1"; }
 log_error() { log "ERROR" "$1"; }
 
 print_divider() {
-  printf '\n%s\n' "============================================================"
+  printf '%s\n' "============================================================"
 }
 
 print_executive_header() {
+  printf '\n'
   print_divider
   printf "|| %-58s||\n" "Repository Mapping Executive Verification"
   print_divider
@@ -38,6 +38,22 @@ print_kv() {
   printf "|| %-20s : %-33s||\n" "${label}" "${value}"
 }
 
+print_kv_wrapped() {
+  local label="$1"
+  local value="$2"
+  local width=35
+
+  if command -v fold >/dev/null 2>&1; then
+    while IFS= read -r line; do
+      print_kv "${label}" "${line}"
+      label=""
+    done <<<"$(echo -n "${value}" | fold -s -w ${width})"
+  else
+    # Fallback without fold; prints raw value and preserves verbose output for debugging.
+    print_kv "${label}" "${value}"
+  fi
+}
+
 usage() {
   cat <<'USAGE'
 verify_repo_container_mapping.sh
@@ -47,6 +63,7 @@ Options:
   --repo-path PATH       Repository path inside the container (default: current directory).
   --expected-remote URL  Optional expected remote URL; fails if the origin does not match.
   --expected-branch NAME Optional expected branch name; fails if HEAD is on a different branch.
+  --trace               Enable shell tracing (set -x) for deep debugging.
   -h, --help             Show this help text.
 USAGE
 }
@@ -54,6 +71,7 @@ USAGE
 REPO_PATH="$(pwd)"
 EXPECTED_REMOTE=""
 EXPECTED_BRANCH=""
+ENABLE_TRACE=false
 
 # Parse arguments using a simple loop to avoid external dependencies while keeping behavior explicit.
 while [[ $# -gt 0 ]]; do
@@ -70,6 +88,10 @@ while [[ $# -gt 0 ]]; do
       EXPECTED_BRANCH="$2"
       shift 2
       ;;
+    --trace)
+      ENABLE_TRACE=true
+      shift 1
+      ;;
     -h|--help)
       usage
       exit 0
@@ -81,6 +103,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${ENABLE_TRACE}" == "true" ]]; then
+  set -x
+  log_info "Shell tracing enabled (--trace)."
+fi
+
+log_info "Starting repository mapping verification."
 
 # Resolve to an absolute path for consistent mount detection.
 if ! REPO_PATH="$(cd "${REPO_PATH}" && pwd -P)"; then
@@ -186,10 +215,10 @@ fi
 print_executive_header
 print_kv "Path" "${GIT_ROOT}"
 print_kv "Mount" "${MOUNT_STATUS}"
-print_kv "Remote" "${ORIGIN_URL:-<none>}"
+print_kv_wrapped "Remote" "${ORIGIN_URL:-<none>}"
 print_kv "Branch" "${CURRENT_BRANCH}"
-print_kv "Commit" "${CURRENT_COMMIT}"
+print_kv_wrapped "Commit" "${CURRENT_COMMIT}"
 print_kv "Write Test" "$([[ -w "${GIT_ROOT}" ]] && echo "Writable" || echo "Read-only")"
-print_kv "Notes" "${MOUNT_NOTES}"
+print_kv_wrapped "Notes" "${MOUNT_NOTES}"
 print_divider
 log_info "Repository mapping verification completed successfully. Executive screen above reflects current state."
