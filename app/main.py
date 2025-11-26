@@ -204,6 +204,7 @@ def build_app() -> gr.Blocks:
     """Build the Gradio Blocks interface with a fixed sidebar and tabs."""
 
     logger.info("Initializing MQ-RAG dashboard UI")
+    logger.debug("Preparing initial state and CSS for UI construction")
 
     initial_state: AppState = {"user": "admin", "session_id": ""}
     combined_css = CUSTOM_CSS_PATH.read_text() + "\n" + INLINE_CSS
@@ -217,6 +218,7 @@ def build_app() -> gr.Blocks:
         app_state = gr.State(initial_state)
         sidebar_visible = gr.State(True)
 
+        logger.debug("Assembling layout rows and sidebar components")
         with gr.Row(elem_classes=["layout-row"]):
             # Sidebar (collapsible)
             with gr.Column(
@@ -268,7 +270,8 @@ def build_app() -> gr.Blocks:
                     gr.Markdown("#### Latency\n< 5s")
                     gr.Markdown("#### Model\nArctic")
 
-                with gr.Row(variant="panel", elem_classes=["input-panel"]):
+                logger.debug("Binding input row without deprecated scale arguments")
+                with gr.Row(variant="panel", elem_classes=["input-panel"], equal_height=True):
                     query_input = gr.Textbox(
                         lines=2,
                         placeholder="Ask the AI a question...",
