@@ -193,6 +193,7 @@ Each helper script is designed with explicit logging so activities can be traced
 - `./scripts/download_embedding.sh`: Idempotently downloads the Snowflake Arctic embedding model (or an override defined by `EMBEDDING_MODEL_ID`) into `data/models/snowflake-arctic-embed-xs` with timestamped progress messages. The script auto-installs `huggingface_hub` when missing and exits with actionable guidance on failure. Override `EMBEDDING_MODEL_DIR` to place the assets elsewhere and re-run safely.
 - `./scripts/docker_build_anonymous.sh`: Builds the Docker image using a temporary `DOCKER_CONFIG` to force anonymous pulls while preserving `docker build` arguments. The script enables `set -x` for command-level tracing, ensuring credential-helper issues are immediately visible.
 - `./scripts/clear_persistent_data.sh`: Clears Chroma vector store and ingested PDF folders under `data/` while leaving models intact. Safety checks prevent destructive deletions, and log statements mark each reset step so you can confirm the storage state before restarting the stack.
+- `./scripts/verify_repo_container_mapping.sh`: Verifies that the Git repository is correctly mapped into the container by reporting mount metadata, validating the configured `origin`, checking the current branch/commit, and performing a safe write test. Verbose tracing (`set -x`) and timestamped log lines make the mapping audit easy to debug.
 
 ## Project Structure
 ```
