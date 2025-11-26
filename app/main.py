@@ -1,10 +1,10 @@
-"""Sleek ChatGPT-style Gradio interface for MQ-RAG.
+"""Modern ChatGPT-style Gradio interface for MQ-RAG.
 
-The previous Claude-inspired landing page has been replaced with a modern,
-compact layout that mirrors the conversational feel of ChatGPT. A collapsible
-sidebar, minimalist controls, and a bottom-aligned input keep the focus on the
-conversation while still exposing history and utilities. Verbose logging is
-used throughout to simplify troubleshooting.
+The main application interface is intentionally compact and minimal: a
+collapsible sidebar, tight control spacing, and a bottom-aligned input replicate
+the efficient feel of ChatGPT while keeping sources tucked away in an optional
+accordion. Verbose logging is used throughout to simplify troubleshooting and
+to align with international programming documentation standards.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import gradio as gr
 from app.config import SHARE_INTERFACE
 from app.rag_chain import query_rag, start_background_prewarm
 
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -73,20 +74,6 @@ def _get_or_create_session(username: str, session_id: str | None) -> SessionReco
     return record
 
 
-def _time_based_greeting(username: str) -> str:
-    """Return a time-of-day aware greeting, e.g. 'Good afternoon, rob'."""
-    now = datetime.now().hour
-    if 5 <= now < 12:
-        salutation = "Good morning"
-    elif 12 <= now < 18:
-        salutation = "Good afternoon"
-    elif 18 <= now < 22:
-        salutation = "Good evening"
-    else:
-        salutation = "Good night"
-    return f"{salutation}, {username}"
-
-
 # ---------------------------------------------------------------------------
 # Chat handler
 # ---------------------------------------------------------------------------
@@ -99,10 +86,9 @@ def _format_answer(query: str, answer: str) -> str:
 
 def handle_query(
     message: str,
-    history: List[List[str]] | None,
     state: AppState,
-) -> Tuple[List[List[str]], str, List[List[Any]], AppState, str]:
-    """Process a user query, update chat history, and format UI outputs."""
+) -> Tuple[str, List[List[Any]], AppState, str]:
+    """Process a user query and format UI outputs for the sleek interface."""
 
     username = state.get("user", "rob")
     session_id = state.get("session_id") or ""
@@ -116,7 +102,6 @@ def handle_query(
             record.session_id,
         )
         return (
-            history or [],
             "Please enter a question to begin.",
             _default_sources(),
             state,
@@ -126,30 +111,25 @@ def handle_query(
     logger.info("Handling query for user=%s session=%s", username, record.session_id)
 
     answer = query_rag(text)
-    history_pairs: List[List[str]] = [list(turn) for turn in (history or [])]
-    history_pairs.append([text, answer])
-
-    record.history = [(h[0], h[1]) for h in history_pairs]
+    record.history.append((text, answer))
     record.updated_at = datetime.utcnow()
     state["session_id"] = record.session_id
 
     logger.debug(
-        "Updated session %s with %d total turns", record.session_id, len(history_pairs)
+        "Updated session %s with %d total turns", record.session_id, len(record.history)
     )
 
     formatted_answer = _format_answer(text, answer)
-    return history_pairs, formatted_answer, _default_sources(), state, ""
+    return formatted_answer, _default_sources(), state, ""
 
 
-def start_new_conversation(
-    state: AppState,
-) -> Tuple[List[List[str]], str, List[List[Any]], AppState, str]:
+def start_new_conversation(state: AppState) -> Tuple[str, List[List[Any]], AppState, str]:
     """Reset the chat for a fresh session while retaining the username."""
 
     logger.info("Starting a new conversation for user=%s", state.get("user", "rob"))
     state["session_id"] = ""
     greeting = "The AI is ready. Enter your query below."
-    return [], greeting, _default_sources(), state, ""
+    return greeting, _default_sources(), state, ""
 
 
 def toggle_sidebar(current_visibility: bool) -> Tuple[bool, gr.update]:
@@ -181,8 +161,8 @@ CUSTOM_CSS = """
 .toggle-icon button { padding: 4px 10px; line-height: 1; font-size: 1.2em; }
 .input-row { align-items: center; }
 
-/* Chatbot appearance */
-.compact-chatbot .gr-chatbot { min-height: 260px; }
+/* Input aesthetics */
+.input-row .gr-textbox { margin-top: 0; }
 """
 
 
@@ -222,17 +202,8 @@ def build_app() -> gr.Blocks:
 
             # Main content
             with gr.Column(scale=4, elem_classes=["main-area"]):
-                with gr.Row():
-                    toggle_icon = gr.Button(
-                        "☰", size="sm", min_width=50, elem_classes=["toggle-icon"]
-                    )
-                    gr.Markdown(_time_based_greeting("rob"))
-
-                chatbot = gr.Chatbot(
-                    label="Conversation",
-                    bubble_full_width=True,
-                    show_copy_button=True,
-                    elem_classes=["compact-chatbot"],
+                toggle_icon = gr.Button(
+                    "☰", size="sm", min_width=50, elem_classes=["toggle-icon"]
                 )
 
                 main_output = gr.Markdown(
@@ -251,10 +222,6 @@ def build_app() -> gr.Blocks:
                         value=_default_sources(),
                     )
 
-                # Using the default row sizing keeps compatibility with current
-                # Gradio versions where the Row container no longer accepts a
-                # ``scale`` parameter. The surrounding columns already handle
-                # responsive sizing for the input and button.
                 with gr.Row(variant="panel", elem_classes=["input-row"]):
                     query_input = gr.Textbox(
                         lines=1,
@@ -265,8 +232,8 @@ def build_app() -> gr.Blocks:
                     search_btn = gr.Button("Send", variant="primary", scale=1, size="sm")
 
         # Wiring
-        search_inputs = [query_input, chatbot, app_state]
-        search_outputs = [chatbot, main_output, source_output, app_state, query_input]
+        search_inputs = [query_input, app_state]
+        search_outputs = [main_output, source_output, app_state, query_input]
 
         search_btn.click(fn=handle_query, inputs=search_inputs, outputs=search_outputs)
         query_input.submit(fn=handle_query, inputs=search_inputs, outputs=search_outputs)
@@ -274,7 +241,7 @@ def build_app() -> gr.Blocks:
         new_chat_btn.click(
             fn=start_new_conversation,
             inputs=[app_state],
-            outputs=[chatbot, main_output, source_output, app_state, query_input],
+            outputs=[main_output, source_output, app_state, query_input],
         )
 
         toggle_icon.click(
