@@ -9,6 +9,7 @@ international programming standards for observability.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -34,20 +35,34 @@ logger.setLevel(logging.DEBUG)
 # ``TypeError`` before the UI initializes. The shim below preserves verbose
 # logging, strips the unsupported key for compatibility, and retains the
 # original initializer for future debugging.
+# Apply the shim only when the current Gradio version lacks ``scale`` support.
+_ROW_SIGNATURE = inspect.signature(gr.Row.__init__)
 _ORIGINAL_ROW_INIT = gr.Row.__init__
 
 
 def _patched_row_init(self, *args: Any, **kwargs: Any) -> None:
     """Patch ``gr.Row.__init__`` to drop deprecated arguments safely."""
 
-    if "scale" in kwargs:
+    if "scale" in kwargs and "scale" not in _ROW_SIGNATURE.parameters:
         kwargs = dict(kwargs)
         kwargs.pop("scale")
-        logger.warning("Removed deprecated 'scale' kwarg from gr.Row: %s", kwargs)
+        logger.warning(
+            "Removed deprecated 'scale' kwarg from gr.Row for compatibility: %s", kwargs
+        )
     _ORIGINAL_ROW_INIT(self, *args, **kwargs)
 
 
-gr.Row.__init__ = _patched_row_init
+if "scale" not in _ROW_SIGNATURE.parameters:
+    gr.Row.__init__ = _patched_row_init
+    logger.debug(
+        "Patched gr.Row.__init__ to ignore deprecated 'scale' kwarg (Gradio %s)",
+        gr.__version__,
+    )
+else:
+    logger.debug(
+        "gr.Row.__init__ already accepts 'scale'; compatibility patch not applied (Gradio %s)",
+        gr.__version__,
+    )
 
 
 # ---------------------------------------------------------------------------
