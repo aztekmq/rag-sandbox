@@ -16,6 +16,14 @@ services:
       - USER_PASSWORD=${USER_PASSWORD:-mquser2025}
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
     volumes:
+      # This is the magic line — your local code is live inside the container
+      - .:/app
+
+      # Persistent volumes for big stuff that must not be overwritten on every edit
       - ./data:/app/data
       - ./models:/app/models
+
     restart: unless-stopped
+    # Optional but recommended for Gradio dev:
+    tty: true                     # keeps stdin open (helps with reload)
+    stdin_open: true
