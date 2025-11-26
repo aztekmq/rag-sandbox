@@ -251,7 +251,11 @@ def build_app() -> gr.Blocks:
                         value=_default_sources(),
                     )
 
-                with gr.Row(scale=1, variant="panel", elem_classes=["input-row"]):
+                # Using the default row sizing keeps compatibility with current
+                # Gradio versions where the Row container no longer accepts a
+                # ``scale`` parameter. The surrounding columns already handle
+                # responsive sizing for the input and button.
+                with gr.Row(variant="panel", elem_classes=["input-row"]):
                     query_input = gr.Textbox(
                         lines=1,
                         placeholder="Ask the AI a question...",
