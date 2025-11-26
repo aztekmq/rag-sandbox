@@ -218,7 +218,10 @@ def build_app() -> gr.Blocks:
         app_state = gr.State(initial_state)
         sidebar_visible = gr.State(True)
 
-        logger.debug("Assembling layout rows and sidebar components")
+        logger.debug(
+            "Assembling layout rows and sidebar components with Gradio %s (no row scaling)",
+            gr.__version__,
+        )
         with gr.Row(elem_classes=["layout-row"]):
             # Sidebar (collapsible)
             with gr.Column(
@@ -270,8 +273,8 @@ def build_app() -> gr.Blocks:
                     gr.Markdown("#### Latency\n< 5s")
                     gr.Markdown("#### Model\nArctic")
 
-                logger.debug("Binding input row without deprecated scale arguments")
-                with gr.Row(variant="panel", elem_classes=["input-panel"], equal_height=True):
+                logger.debug("Binding input row without deprecated row scale arguments")
+                with gr.Row(elem_classes=["input-panel"], equal_height=True):
                     query_input = gr.Textbox(
                         lines=2,
                         placeholder="Ask the AI a question...",
