@@ -169,8 +169,14 @@ fi
 MOUNT_STATUS="UNKNOWN"
 MOUNT_NOTES="Mount inspection not available; cannot confirm whether the host repository is mapped."
 
-if [[ -n "${MOUNT_INFO:-}" ]]; then
-  read -r MNT_TARGET MNT_SOURCE MNT_FSTYPE MNT_OPTIONS <<<"${MOUNT_INFO}"
+classify_mount_from_findmnt() {
+  local mount_info="$1"
+
+  if [[ -z "${mount_info}" ]]; then
+    return
+  fi
+
+  read -r MNT_TARGET MNT_SOURCE MNT_FSTYPE MNT_OPTIONS <<<"${mount_info}"
   if [[ "${MNT_OPTIONS}" == *"bind"* ]]; then
     MOUNT_STATUS="HOST_BIND"
     MOUNT_NOTES="Bind mount detected (options include 'bind'); repository should reflect the host Git checkout."
@@ -181,8 +187,11 @@ if [[ -n "${MOUNT_INFO:-}" ]]; then
     MOUNT_STATUS="STANDARD_FS"
     MOUNT_NOTES="Mounted on ${MNT_FSTYPE} without 'bind'; host mapping uncertain—confirm repository freshness manually."
   fi
-  log_info "Mount classification: ${MOUNT_STATUS} (${MOUNT_NOTES})"
-fi
+}
+
+classify_mount_from_findmnt "${MOUNT_INFO:-}"
+
+log_info "Mount classification (pre-docker): ${MOUNT_STATUS} (${MOUNT_NOTES})"
 
 ORIGIN_URL="$(git -C "${GIT_ROOT}" remote get-url origin 2>/dev/null || true)"
 if [[ -n "${ORIGIN_URL}" ]]; then
@@ -249,6 +258,20 @@ if [[ -n "${CONTAINER_NAME}" ]]; then
     CONTAINER_MOUNTS=$(docker inspect "${CONTAINER_NAME}" --format '{{range .Mounts}}{{printf "%s:%s (%s);" .Source .Destination .Mode}}{{end}}')
     if [[ -n "${CONTAINER_MOUNTS}" ]]; then
       log_info "[docker] Mounts for ${CONTAINER_NAME}: ${CONTAINER_MOUNTS}"
+
+      MATCHING_MOUNT=$(docker inspect "${CONTAINER_NAME}" --format '{{range .Mounts}}{{if eq .Destination "'"'"'"'"'${CONTAINER_REPO_PATH}'"'"'"'"'"}}'"'"'{{printf "%s:%s (%s)" .Source .Destination .Mode}}'"'"'{{end}}{{end}}')
+      if [[ -n "${MATCHING_MOUNT}" ]]; then
+        log_info "[docker] Mount that contains the repository path: ${MATCHING_MOUNT}"
+        if [[ "${MATCHING_MOUNT}" == *"bind"* ]]; then
+          MOUNT_STATUS="HOST_BIND"
+          MOUNT_NOTES="Docker reports a bind mount for ${CONTAINER_REPO_PATH}; host repository should be visible."
+        else
+          MOUNT_STATUS="DOCKER_VOLUME"
+          MOUNT_NOTES="Docker reports a non-bind mount for ${CONTAINER_REPO_PATH}; verify host changes propagate."
+        fi
+      else
+        log_warn "[docker] No mount entry matched container path ${CONTAINER_REPO_PATH}."
+      fi
     else
       log_warn "[docker] No mounts reported for ${CONTAINER_NAME}."
     fi
@@ -310,6 +333,8 @@ if [[ -n "${CONTAINER_NAME}" ]]; then
     log_warn "[docker] Write test inside container failed; mount may be read-only."
   fi
 fi
+
+log_info "Mount classification (post-docker): ${MOUNT_STATUS} (${MOUNT_NOTES})"
 
 # Confirm the working tree is readable and writable, which indicates the bind mount is functioning.
 if [[ -w "${GIT_ROOT}" ]]; then
