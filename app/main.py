@@ -26,6 +26,31 @@ logger.setLevel(logging.DEBUG)
 
 
 # ---------------------------------------------------------------------------
+# Gradio compatibility shims
+# ---------------------------------------------------------------------------
+
+# Gradio 4.x removed the ``scale`` argument from :class:`gr.Row`. Older code
+# paths (including legacy deployments) can still pass ``scale`` and raise a
+# ``TypeError`` before the UI initializes. The shim below preserves verbose
+# logging, strips the unsupported key for compatibility, and retains the
+# original initializer for future debugging.
+_ORIGINAL_ROW_INIT = gr.Row.__init__
+
+
+def _patched_row_init(self, *args: Any, **kwargs: Any) -> None:
+    """Patch ``gr.Row.__init__`` to drop deprecated arguments safely."""
+
+    if "scale" in kwargs:
+        kwargs = dict(kwargs)
+        kwargs.pop("scale")
+        logger.warning("Removed deprecated 'scale' kwarg from gr.Row: %s", kwargs)
+    _ORIGINAL_ROW_INIT(self, *args, **kwargs)
+
+
+gr.Row.__init__ = _patched_row_init
+
+
+# ---------------------------------------------------------------------------
 # Simple session store
 # ---------------------------------------------------------------------------
 
