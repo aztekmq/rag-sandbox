@@ -354,6 +354,8 @@ def _create_row(**kwargs: Any) -> gr.Row:
                 "Discarded unsupported gr.Row kwarg %s=%s to maintain compatibility", key, removed
             )
 
+    logger.debug("Creating gr.Row with sanitized kwargs: %s", filtered_kwargs)
+
     try:
         return gr.Row(**filtered_kwargs)
     except TypeError as exc:  # pragma: no cover - defensive path
