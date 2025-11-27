@@ -281,21 +281,9 @@ def build_app() -> gr.Blocks:
                 gr.Markdown("### Navigation", elem_classes=["section-title"])
 
                 with _create_row(elem_classes=["nav-buttons"]):
-                    gr.Button("Search", size="sm").click(
-                        lambda cv: switch_view("search", cv),
-                        active_view_state,
-                        [active_view_state, None, None, None],
-                    )
-                    gr.Button("Docs", size="sm").click(
-                        lambda cv: switch_view("docs", cv),
-                        active_view_state,
-                        [active_view_state, None, None, None],
-                    )
-                    gr.Button("Help", size="sm").click(
-                        lambda cv: switch_view("help", cv),
-                        active_view_state,
-                        [active_view_state, None, None, None],
-                    )
+                    search_nav_btn = gr.Button("Search", size="sm")
+                    docs_nav_btn = gr.Button("Docs", size="sm")
+                    help_nav_btn = gr.Button("Help", size="sm")
 
                 history_panel = gr.Markdown("*No turns yet.*", elem_classes=["history-panel"])
                 gr.Markdown(
@@ -375,8 +363,11 @@ def build_app() -> gr.Blocks:
         query_input.submit(handle_query, [query_input, app_state], outputs)
 
         # Navigation buttons (update visibility via switch_view)
-        for btn, view in [("Search", "search"), ("Docs", "docs"), ("Help", "help")]:
-            btn_obj = next(c for c in sidebar_col.children if isinstance(c, gr.Button) and c.value == view)
+        for btn_obj, view in [
+            (search_nav_btn, "search"),
+            (docs_nav_btn, "docs"),
+            (help_nav_btn, "help"),
+        ]:
             btn_obj.click(
                 lambda cv, v=view: switch_view(v, cv),
                 active_view_state,
