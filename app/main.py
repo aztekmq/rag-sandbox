@@ -321,11 +321,21 @@ def _create_row(**kwargs: Any) -> gr.Row:
     """
 
     filtered_kwargs = dict(kwargs)
+
     if "scale" in filtered_kwargs:
         logger.warning(
             "Removing unsupported 'scale' from gr.Row args: %s", filtered_kwargs
         )
         filtered_kwargs.pop("scale")
+
+    allowed_keys = set(_ROW_SIGNATURE.parameters.keys()) - {"self"}
+    dropped_keys = [key for key in list(filtered_kwargs.keys()) if key not in allowed_keys]
+    if dropped_keys:
+        for key in dropped_keys:
+            removed = filtered_kwargs.pop(key)
+            logger.warning(
+                "Discarded unsupported gr.Row kwarg %s=%s to maintain compatibility", key, removed
+            )
 
     try:
         return gr.Row(**filtered_kwargs)
