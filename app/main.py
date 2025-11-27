@@ -53,48 +53,68 @@ logger.debug(
 # ``TypeError`` before the UI initializes. The shim below preserves verbose
 # logging, strips the unsupported key for compatibility, and retains the
 # original initializer for future debugging.
-# Apply the shim only when the current Gradio version lacks ``scale`` support.
 _ROW_SIGNATURE = inspect.signature(gr.Row.__init__)
 _ORIGINAL_ROW_INIT = gr.Row.__init__
+_ROW_PATCH_APPLIED = False
 
 
-def _patched_row_init(self, *args: Any, **kwargs: Any) -> None:
-    """Patch ``gr.Row.__init__`` to drop deprecated arguments safely."""
+def apply_gradio_row_shim() -> None:
+    """Apply a compatibility shim that ignores deprecated ``scale`` arguments.
 
-    if "scale" in kwargs:
-        kwargs = dict(kwargs)
-        removed_scale = kwargs.pop("scale")
-        logger.warning(
-            "Removed unsupported 'scale' kwarg=%s from gr.Row for compatibility", removed_scale
-        )
-    try:
-        _ORIGINAL_ROW_INIT(self, *args, **kwargs)
-    except TypeError as exc:  # pragma: no cover - defensive path
-        # Gradio versions without **kwargs on Row will still raise if a legacy
-        # caller passes ``scale``. Strip the key and retry once so the UI can
-        # continue initializing instead of crashing at startup.
+    The helper is idempotent and logs every action so operators can trace when
+    layout compatibility fixes were installed. Centralizing the patch also keeps
+    the module aligned with international programming standards for runtime
+    documentation and observability.
+    """
+
+    global _ROW_PATCH_APPLIED
+
+    if _ROW_PATCH_APPLIED:
+        logger.debug("gr.Row shim already active; skipping duplicate patch")
+        return
+
+    def _patched_row_init(self, *args: Any, **kwargs: Any) -> None:
+        """Patch ``gr.Row.__init__`` to drop deprecated arguments safely."""
+
         if "scale" in kwargs:
-            logger.error(
-                "Retrying gr.Row init without deprecated 'scale' kwarg after failure: %s",
-                exc,
+            kwargs = dict(kwargs)
+            removed_scale = kwargs.pop("scale")
+            logger.warning(
+                "Removed unsupported 'scale' kwarg=%s from gr.Row for compatibility",
+                removed_scale,
             )
-            sanitized_kwargs = {k: v for k, v in kwargs.items() if k != "scale"}
-            _ORIGINAL_ROW_INIT(self, *args, **sanitized_kwargs)
-        else:
-            raise
+        try:
+            _ORIGINAL_ROW_INIT(self, *args, **kwargs)
+        except TypeError as exc:  # pragma: no cover - defensive path
+            # Gradio versions without **kwargs on Row will still raise if a
+            # legacy caller passes ``scale``. Strip the key and retry once so
+            # the UI can continue initializing instead of crashing at startup.
+            if "scale" in kwargs:
+                logger.error(
+                    "Retrying gr.Row init without deprecated 'scale' kwarg after failure: %s",
+                    exc,
+                )
+                sanitized_kwargs = {k: v for k, v in kwargs.items() if k != "scale"}
+                _ORIGINAL_ROW_INIT(self, *args, **sanitized_kwargs)
+            else:
+                raise
+
+    if "scale" not in _ROW_SIGNATURE.parameters:
+        gr.Row.__init__ = _patched_row_init
+        logger.info(
+            "Patched gr.Row.__init__ to ignore deprecated 'scale' kwarg (Gradio %s)",
+            gr.__version__,
+        )
+    else:
+        logger.info(
+            "gr.Row.__init__ already accepts 'scale'; compatibility patch not applied (Gradio %s)",
+            gr.__version__,
+        )
+
+    _ROW_PATCH_APPLIED = True
 
 
-if "scale" not in _ROW_SIGNATURE.parameters:
-    gr.Row.__init__ = _patched_row_init
-    logger.debug(
-        "Patched gr.Row.__init__ to ignore deprecated 'scale' kwarg (Gradio %s)",
-        gr.__version__,
-    )
-else:
-    logger.debug(
-        "gr.Row.__init__ already accepts 'scale'; compatibility patch not applied (Gradio %s)",
-        gr.__version__,
-    )
+apply_gradio_row_shim()
 
 
 # ---------------------------------------------------------------------------
