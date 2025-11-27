@@ -52,7 +52,10 @@ logger.debug(
 # paths (including legacy deployments) can still pass ``scale`` and raise a
 # ``TypeError`` before the UI initializes. The shim below preserves verbose
 # logging, strips the unsupported key for compatibility, and retains the
-# original initializer for future debugging.
+# original initializer for future debugging. It also provides a defensive
+# fallback path that retries initialization with sanitized arguments so UI
+# construction never fails purely because of keyword drift between Gradio
+# releases.
 _ROW_SIGNATURE = inspect.signature(gr.Row.__init__)
 _ORIGINAL_ROW_INIT = gr.Row.__init__
 _ROW_PATCH_APPLIED = False
@@ -89,15 +92,11 @@ def apply_gradio_row_shim() -> None:
             # Gradio versions without **kwargs on Row will still raise if a
             # legacy caller passes ``scale``. Strip the key and retry once so
             # the UI can continue initializing instead of crashing at startup.
-            if "scale" in kwargs:
-                logger.error(
-                    "Retrying gr.Row init without deprecated 'scale' kwarg after failure: %s",
-                    exc,
-                )
-                sanitized_kwargs = {k: v for k, v in kwargs.items() if k != "scale"}
-                _ORIGINAL_ROW_INIT(self, *args, **sanitized_kwargs)
-            else:
-                raise
+            logger.error(
+                "Retrying gr.Row init with sanitized kwargs after failure: %s", exc
+            )
+            sanitized_kwargs = {k: v for k, v in kwargs.items() if k != "scale"}
+            _ORIGINAL_ROW_INIT(self, *args, **sanitized_kwargs)
 
     gr.Row.__init__ = _patched_row_init
     logger.info(
@@ -327,7 +326,17 @@ def _create_row(**kwargs: Any) -> gr.Row:
             "Removing unsupported 'scale' from gr.Row args: %s", filtered_kwargs
         )
         filtered_kwargs.pop("scale")
-    return gr.Row(**filtered_kwargs)
+
+    try:
+        return gr.Row(**filtered_kwargs)
+    except TypeError as exc:  # pragma: no cover - defensive path
+        logger.error(
+            "Retrying gr.Row construction after filtering unsupported kwargs: %s", exc
+        )
+        safe_kwargs = {
+            key: value for key, value in filtered_kwargs.items() if key in _ROW_SIGNATURE.parameters
+        }
+        return gr.Row(**safe_kwargs)
 
 
 # ---------------------------------------------------------------------------
