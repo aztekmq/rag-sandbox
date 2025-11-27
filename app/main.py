@@ -79,13 +79,28 @@ def apply_gradio_row_shim() -> None:
     def _patched_row_init(self, *args: Any, **kwargs: Any) -> None:
         """Patch ``gr.Row.__init__`` to drop deprecated arguments safely."""
 
-        if "scale" in kwargs:
+        if kwargs:
             kwargs = dict(kwargs)
-            removed_scale = kwargs.pop("scale")
-            logger.warning(
-                "Removed unsupported 'scale' kwarg=%s from gr.Row for compatibility",
-                removed_scale,
-            )
+
+            if "scale" in kwargs:
+                removed_scale = kwargs.pop("scale")
+                logger.warning(
+                    "Removed unsupported 'scale' kwarg=%s from gr.Row for compatibility",
+                    removed_scale,
+                )
+
+            unsupported = [
+                key for key in list(kwargs.keys()) if key not in _ROW_SIGNATURE.parameters
+            ]
+            if unsupported:
+                for key in unsupported:
+                    removed = kwargs.pop(key)
+                    logger.warning(
+                        "Dropped unsupported gr.Row kwarg %s=%s to prevent TypeError",
+                        key,
+                        removed,
+                    )
+
         try:
             _ORIGINAL_ROW_INIT(self, *args, **kwargs)
         except TypeError as exc:  # pragma: no cover - defensive path
@@ -95,7 +110,9 @@ def apply_gradio_row_shim() -> None:
             logger.error(
                 "Retrying gr.Row init with sanitized kwargs after failure: %s", exc
             )
-            sanitized_kwargs = {k: v for k, v in kwargs.items() if k != "scale"}
+            sanitized_kwargs = {
+                k: v for k, v in kwargs.items() if k in _ROW_SIGNATURE.parameters
+            }
             _ORIGINAL_ROW_INIT(self, *args, **sanitized_kwargs)
 
     gr.Row.__init__ = _patched_row_init
