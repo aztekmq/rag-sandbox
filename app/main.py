@@ -216,15 +216,24 @@ def start_new_conversation(state: AppState) -> Tuple[str, List[List[Any]], str, 
     return greeting, _default_sources(), DEFAULT_LOG_MESSAGE, "", state, "", sidebar_md
 
 
-def switch_view(target: str, current: str) -> Tuple[str, gr.Column, gr.Column, gr.Column]:
+def switch_view(target: str, current: str) -> Tuple[str, gr.Update, gr.Update, gr.Update]:
+    """Switch the active view while emitting explicit visibility updates.
+
+    Gradio layout containers (``Column`` in this case) do not expose a class-level
+    ``update`` helper. The framework expects ``gr.update`` (or component
+    instances) to describe visibility changes during event callbacks. Returning
+    explicit ``gr.update`` payloads here keeps the UI state machine compatible
+    with Gradio 4.x while preserving verbose logging for operators.
+    """
+
     target = (target or "search").lower()
     resolved = "search" if target not in {"search", "docs", "help"} else target
     logger.info("View switch: %s → %s", current, resolved)
     return (
         resolved,
-        gr.Column.update(visible=resolved == "search"),
-        gr.Column.update(visible=resolved == "docs"),
-        gr.Column.update(visible=resolved == "help"),
+        gr.update(visible=resolved == "search"),
+        gr.update(visible=resolved == "docs"),
+        gr.update(visible=resolved == "help"),
     )
 
 
