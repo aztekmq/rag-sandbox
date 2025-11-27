@@ -17,8 +17,8 @@ from typing import Any, Dict, Generator, List, Tuple, TypedDict
 
 import gradio as gr
 
-from app.config import SHARE_INTERFACE
-from app.rag_chain import query_rag, start_background_prewarm
+from app.config import PDF_DIR, SHARE_INTERFACE
+from app.rag_chain import get_documents_list, query_rag, start_background_prewarm
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -228,6 +228,100 @@ def switch_view(target: str, current: str) -> Tuple[str, gr.Column, gr.Column, g
     )
 
 
+def _summarize_library(documents: List[str]) -> Tuple[List[List[str]], str]:
+    """Build Manage Docs table rows and overview text with verbose logging.
+
+    The helper inspects the on-disk PDF directory to surface file sizes and
+    modification timestamps so operators can quickly validate which assets are
+    indexed. Logging is intentionally chatty to satisfy the debugging
+    requirement while keeping the UI rendering straightforward.
+    """
+
+    rows: List[List[str]] = []
+    logger.info("Preparing Manage Docs inventory for %d entries", len(documents))
+
+    for name in documents:
+        path = PDF_DIR / name
+        size_text = "—"
+        timestamp = "—"
+
+        if path.exists():
+            try:
+                stats = path.stat()
+                size_text = f"{stats.st_size / 1024:.1f} KB"
+                timestamp = datetime.utcfromtimestamp(stats.st_mtime).strftime(
+                    "%Y-%m-%d %H:%M UTC"
+                )
+                logger.debug(
+                    "Hydrated metadata for %s (size=%s, mtime=%s)",
+                    name,
+                    size_text,
+                    timestamp,
+                )
+            except OSError:
+                logger.exception("Failed to stat %s", path)
+
+        rows.append([name, size_text, timestamp])
+
+    if not rows:
+        summary = "No documents ingested yet. Upload PDFs to build your knowledge base."
+    else:
+        bullet_list = "\n".join([f"• {row[0]} ({row[1]})" for row in rows])
+        summary = f"**{len(rows)} indexed documents**\n\n{bullet_list}"
+
+    logger.info("Manage Docs overview prepared with %d row(s)", len(rows))
+    return rows, summary
+
+
+def open_manage_docs(current_view: str, documents: List[str]) -> Tuple[str, gr.Dataframe, str, gr.Column, gr.Column, gr.Column]:
+    """Switch to the Manage Docs panel and hydrate its table/summary content."""
+
+    rows, summary = _summarize_library(documents)
+    logger.info("Opening Manage Docs view from %s", current_view or "unknown")
+    updated_view, search_visible, docs_visible, help_visible = switch_view("docs", current_view)
+    return (
+        updated_view,
+        gr.Dataframe.update(value=rows),
+        summary,
+        search_visible,
+        docs_visible,
+        help_visible,
+    )
+
+
+def refresh_manage_docs(current_view: str, documents: List[str]) -> Tuple[gr.Dataframe, str]:
+    """Refresh Manage Docs inventory without altering the current view selection."""
+
+    rows, summary = _summarize_library(documents)
+    logger.info("Refreshing Manage Docs table from %s", current_view or "unknown")
+    return gr.Dataframe.update(value=rows), summary
+
+
+HELP_ENTRIES = [
+    ("Using the Assistant", "Start in the Search tab and ask natural-language questions."),
+    ("Uploading Documents", "Open Manage Docs to add or refresh PDF knowledge sources."),
+    ("Troubleshooting", "Check the Logs tab after a query for streaming diagnostics."),
+]
+
+
+def render_help_content() -> str:
+    """Render the Help FAQ section in a consistent, easily scannable format."""
+
+    logger.info("Rendering Help content with %d entries", len(HELP_ENTRIES))
+    lines = ["### Help & Runbooks", ""]
+    for title, detail in HELP_ENTRIES:
+        lines.append(f"**{title}**\n- {detail}\n")
+    return "\n".join(lines)
+
+
+def open_help(current_view: str) -> Tuple[str, str, gr.Column, gr.Column, gr.Column]:
+    """Switch to the Help panel and populate the FAQ copy."""
+
+    logger.info("Opening Help view from %s", current_view or "unknown")
+    updated_view, search_visible, docs_visible, help_visible = switch_view("help", current_view)
+    return updated_view, render_help_content(), search_visible, docs_visible, help_visible
+
+
 # ---------------------------------------------------------------------------
 # CSS
 # ---------------------------------------------------------------------------
@@ -261,6 +355,8 @@ def build_app() -> gr.Blocks:
     ) as demo:
         app_state = gr.State({"user": "admin", "session_id": "", "active_view": "search"})
         active_view_state = gr.State("search")
+
+        initial_doc_rows, initial_doc_overview = _summarize_library(get_documents_list())
 
         # Main layout: Sidebar + Content
         with _create_row(variant="panel", elem_classes=["layout-row"], equal_height=True):
@@ -340,15 +436,19 @@ def build_app() -> gr.Blocks:
                     with _create_row(equal_height=True):
                         gr.File(label="Upload documents", file_types=[".pdf", ".txt"], type="filepath")
                         gr.Button("Trigger Ingestion", variant="primary", size="sm")
-                    gr.Markdown("**Recent activity**\n- Intake pending\n- No warnings logged")
+                        refresh_docs_btn = gr.Button("Refresh Library", size="sm")
+                    doc_overview = gr.Markdown(initial_doc_overview)
+                    doc_table = gr.Dataframe(
+                        headers=["Name", "Size", "Last Updated"],
+                        datatype=["str", "str", "str"],
+                        value=initial_doc_rows,
+                        interactive=False,
+                    )
 
                 # Help Panel
                 with gr.Column(visible=False, elem_classes=["view-panel", "help-panel"]) as help_panel:
                     gr.Markdown("### Help")
-                    gr.Markdown("Common questions and runbooks.")
-                    gr.Markdown(
-                        "**FAQ**\n- Open UI at http://localhost:7860\n- Refresh index in Docs tab\n- Check Logs tab after search"
-                    )
+                    help_markdown = gr.Markdown(render_help_content())
 
         # === Event Wiring ===
         outputs = [answer_panel, source_output, log_panel, raw_panel, app_state, query_input, history_panel]
@@ -364,15 +464,23 @@ def build_app() -> gr.Blocks:
         query_input.submit(handle_query, [query_input, app_state], outputs)
 
         # Navigation buttons (update visibility via switch_view)
-        for btn_obj, view in [
-            (manage_docs_nav_btn, "docs"),
-            (help_nav_btn, "help"),
-        ]:
-            btn_obj.click(
-                lambda cv, v=view: switch_view(v, cv),
-                active_view_state,
-                [active_view_state, search_panel, docs_panel, help_panel],
-            )
+        manage_docs_nav_btn.click(
+            lambda cv: open_manage_docs(cv, get_documents_list()),
+            active_view_state,
+            [active_view_state, doc_table, doc_overview, search_panel, docs_panel, help_panel],
+        )
+
+        help_nav_btn.click(
+            open_help,
+            active_view_state,
+            [active_view_state, help_markdown, search_panel, docs_panel, help_panel],
+        )
+
+        refresh_docs_btn.click(
+            lambda cv: refresh_manage_docs(cv, get_documents_list()),
+            active_view_state,
+            [doc_table, doc_overview],
+        )
 
     return demo
 
