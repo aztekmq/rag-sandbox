@@ -62,6 +62,21 @@ def _create_row(**kwargs: Any) -> gr.Row:
     return _ORIGINAL_ROW(**sanitized)
 
 
+class _CompatRow(gr.Row):
+    """Row subclass that tolerates deprecated arguments like ``scale``.
+
+    Gradio 4.x removed the ``scale`` keyword from ``Row.__init__``. Some of our
+    legacy layout calls (or downstream extensions) may still try to use it. The
+    subclass strips unsupported kwargs before delegating to the base
+    implementation, keeping the runtime resilient even if stray ``scale``
+    values leak through.
+    """
+
+    def __init__(self, *components: Any, **kwargs: Any) -> None:  # noqa: D401
+        sanitized = _sanitize_row_kwargs(kwargs)
+        super().__init__(*components, **sanitized)
+
+
 def _monkey_patch_row() -> None:
     """Install a compatibility wrapper around ``gr.Row`` that strips ``scale``.
 
@@ -71,11 +86,7 @@ def _monkey_patch_row() -> None:
     troubleshooting.
     """
 
-    def _patched_row(*args: Any, **kwargs: Any) -> gr.Row:
-        sanitized = _sanitize_row_kwargs(kwargs)
-        return _ORIGINAL_ROW(*args, **sanitized)
-
-    gr.Row = _patched_row  # type: ignore[assignment]
+    gr.Row = _CompatRow  # type: ignore[assignment]
     logger.info("Applied Gradio Row compatibility shim (deprecated args stripped)")
 
 
