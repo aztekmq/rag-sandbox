@@ -99,17 +99,11 @@ def apply_gradio_row_shim() -> None:
             else:
                 raise
 
-    if "scale" not in _ROW_SIGNATURE.parameters:
-        gr.Row.__init__ = _patched_row_init
-        logger.info(
-            "Patched gr.Row.__init__ to ignore deprecated 'scale' kwarg (Gradio %s)",
-            gr.__version__,
-        )
-    else:
-        logger.info(
-            "gr.Row.__init__ already accepts 'scale'; compatibility patch not applied (Gradio %s)",
-            gr.__version__,
-        )
+    gr.Row.__init__ = _patched_row_init
+    logger.info(
+        "Patched gr.Row.__init__ to ignore deprecated 'scale' kwarg (Gradio %s)",
+        gr.__version__,
+    )
 
     _ROW_PATCH_APPLIED = True
 
