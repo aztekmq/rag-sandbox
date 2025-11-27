@@ -19,6 +19,10 @@ services:
       # This is the magic line — your local code is live inside the container
       - .:/app
 
+      # Mirror host timezone files so container timestamps stay aligned with the host OS
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+
       # Persistent volumes for big stuff that must not be overwritten on every edit
       - ./data:/app/data
       - ./models:/app/models
