@@ -64,7 +64,21 @@ def _patched_row_init(self, *args: Any, **kwargs: Any) -> None:
         logger.warning(
             "Removed unsupported 'scale' kwarg=%s from gr.Row for compatibility", removed_scale
         )
-    _ORIGINAL_ROW_INIT(self, *args, **kwargs)
+    try:
+        _ORIGINAL_ROW_INIT(self, *args, **kwargs)
+    except TypeError as exc:  # pragma: no cover - defensive path
+        # Gradio versions without **kwargs on Row will still raise if a legacy
+        # caller passes ``scale``. Strip the key and retry once so the UI can
+        # continue initializing instead of crashing at startup.
+        if "scale" in kwargs:
+            logger.error(
+                "Retrying gr.Row init without deprecated 'scale' kwarg after failure: %s",
+                exc,
+            )
+            sanitized_kwargs = {k: v for k, v in kwargs.items() if k != "scale"}
+            _ORIGINAL_ROW_INIT(self, *args, **sanitized_kwargs)
+        else:
+            raise
 
 
 if "scale" not in _ROW_SIGNATURE.parameters:
