@@ -44,6 +44,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1
+# Force CPU-only execution to avoid noisy GPU discovery warnings inside minimal
+# containers. Verbose logging remains available in the app for debugging.
+ENV CUDA_VISIBLE_DEVICES="" \
+    ORT_DEVICE_ALLOWLIST="cpu"
 WORKDIR /app
 
 # Copy installed Python packages from builder

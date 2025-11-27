@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -24,6 +25,20 @@ from app.rag_chain import query_rag, start_background_prewarm
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+
+# ---------------------------------------------------------------------------
+# Runtime environment hardening
+# ---------------------------------------------------------------------------
+
+# Force ONNX Runtime to remain on CPU-only execution paths inside containers
+# where GPU discovery fails (e.g., missing /sys/class/drm/*). Keeping the
+# configuration explicit prevents noisy warnings during startup and clarifies
+# the intended hardware target for operators. This follows international
+# programming standards by documenting operational safeguards directly in code.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+os.environ.setdefault("ORT_DEVICE_ALLOWLIST", "cpu")
+logger.debug("GPU execution disabled; using CPU-only ONNX providers")
 
 
 # ---------------------------------------------------------------------------
@@ -43,11 +58,11 @@ _ORIGINAL_ROW_INIT = gr.Row.__init__
 def _patched_row_init(self, *args: Any, **kwargs: Any) -> None:
     """Patch ``gr.Row.__init__`` to drop deprecated arguments safely."""
 
-    if "scale" in kwargs and "scale" not in _ROW_SIGNATURE.parameters:
+    if "scale" in kwargs:
         kwargs = dict(kwargs)
-        kwargs.pop("scale")
+        removed_scale = kwargs.pop("scale")
         logger.warning(
-            "Removed deprecated 'scale' kwarg from gr.Row for compatibility: %s", kwargs
+            "Removed unsupported 'scale' kwarg=%s from gr.Row for compatibility", removed_scale
         )
     _ORIGINAL_ROW_INIT(self, *args, **kwargs)
 
