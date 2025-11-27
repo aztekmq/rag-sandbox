@@ -239,12 +239,16 @@ def switch_view(target: str, current: str) -> Tuple[str, gr.Column, gr.Column, g
 # ---------------------------------------------------------------------------
 INLINE_CSS = """
 .layout-row { align-items: stretch; gap: 16px !important; }
+.header-left { gap: 8px !important; align-items: center; }
 .sidebar-card { gap: 8px !important; }
 .sidebar-footer { color: #7a6c5d; font-size: 13px; }
 .kpi-strip { gap: 10px !important; display: flex; flex-wrap: wrap; }
 .kpi-card { min-width: 150px; padding: 12px; background: #f8f9fa; border-radius: 8px; }
 .result-tabs .gr-panel { background: transparent; border: none; box-shadow: none; }
 .input-panel .gr-textbox { margin-top: 0; }
+.send-column { max-width: 150px; }
+.send-compact button { width: auto; min-width: 96px; padding: 10px 16px; }
+.sidebar-toggle button { min-width: 40px; padding: 8px 10px; }
 """
 
 # ---------------------------------------------------------------------------
@@ -293,11 +297,15 @@ def build_app() -> gr.Blocks:
 
             # === MAIN CONTENT ===
             with gr.Column(elem_classes=["main-area", "center-stage"]):
-                with _create_row(justify="between", elem_classes=["header-row"]):
-                    gr.Markdown("### MQ-RAG Assistant", elem_classes=["title-text"])
-                    gr.Button("Menu", size="sm", elem_classes=["toggle-icon"], variant="secondary").click(
-                        toggle_sidebar, sidebar_visible, [sidebar_visible, sidebar_col]
-                    )
+                with _create_row(justify="between", elem_classes=["header-row"], equal_height=True):
+                    with _create_row(elem_classes=["header-left"], equal_height=True):
+                        sidebar_toggle = gr.Button(
+                            "☰",
+                            size="sm",
+                            elem_classes=["toggle-icon", "sidebar-toggle"],
+                            variant="secondary",
+                        )
+                        gr.Markdown("### MQ-RAG Assistant", elem_classes=["title-text"])
 
                 with _create_row(elem_classes=["badge-row", "header-meta"]):
                     gr.Markdown("<span class='badge accent-badge'>Live</span>")
@@ -316,13 +324,20 @@ def build_app() -> gr.Blocks:
                 with gr.Column(visible=True, elem_classes=["view-panel"]) as search_panel:
                     gr.Markdown("### Search", elem_classes=["section-heading"])
                     with _create_row(elem_classes=["input-panel"], equal_height=True):
-                        query_input = gr.Textbox(
-                            lines=2,
-                            placeholder="Ask the AI a question...",
-                            container=False,
-                            elem_id="query-input",
-                        )
-                        search_btn = gr.Button("Send", variant="primary", size="sm")
+                        with gr.Column(scale=4, elem_classes=["query-column"]):
+                            query_input = gr.Textbox(
+                                lines=2,
+                                placeholder="Ask the AI a question...",
+                                container=False,
+                                elem_id="query-input",
+                            )
+                        with gr.Column(scale=1, min_width=0, elem_classes=["send-column"]):
+                            search_btn = gr.Button(
+                                "Send",
+                                variant="primary",
+                                size="sm",
+                                elem_classes=["send-compact"],
+                            )
 
                     with gr.Tabs(elem_classes=["result-tabs"]):
                         with gr.Tab("Answer"):
@@ -359,6 +374,7 @@ def build_app() -> gr.Blocks:
         # === Event Wiring ===
         outputs = [answer_panel, source_output, log_panel, raw_panel, app_state, query_input, history_panel]
 
+        sidebar_toggle.click(toggle_sidebar, sidebar_visible, [sidebar_visible, sidebar_col])
         search_btn.click(handle_query, [query_input, app_state], outputs)
         query_input.submit(handle_query, [query_input, app_state], outputs)
 
