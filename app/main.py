@@ -61,6 +61,34 @@ _ORIGINAL_ROW_INIT = gr.Row.__init__
 _ROW_PATCH_APPLIED = False
 
 
+def _sanitize_row_kwargs(raw_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of Row kwargs with deprecated keys removed.
+
+    Centralizing this logic keeps both the runtime shim and the helper factory
+    aligned while preserving verbose logging that explains every mutation.
+    """
+
+    cleaned = dict(raw_kwargs)
+
+    if "scale" in cleaned:
+        removed_scale = cleaned.pop("scale")
+        logger.warning(
+            "Removed unsupported 'scale' kwarg=%s from gr.Row for compatibility", removed_scale
+        )
+
+    allowed_keys = set(_ROW_SIGNATURE.parameters.keys()) - {"self"}
+    unsupported = [key for key in list(cleaned.keys()) if key not in allowed_keys]
+    if unsupported:
+        for key in unsupported:
+            removed = cleaned.pop(key)
+            logger.warning(
+                "Dropped unsupported gr.Row kwarg %s=%s to prevent TypeError", key, removed
+            )
+
+    logger.debug("Sanitized gr.Row kwargs from %s to %s", raw_kwargs, cleaned)
+    return cleaned
+
+
 def apply_gradio_row_shim() -> None:
     """Apply a compatibility shim that ignores deprecated ``scale`` arguments.
 
@@ -80,26 +108,7 @@ def apply_gradio_row_shim() -> None:
         """Patch ``gr.Row.__init__`` to drop deprecated arguments safely."""
 
         if kwargs:
-            kwargs = dict(kwargs)
-
-            if "scale" in kwargs:
-                removed_scale = kwargs.pop("scale")
-                logger.warning(
-                    "Removed unsupported 'scale' kwarg=%s from gr.Row for compatibility",
-                    removed_scale,
-                )
-
-            unsupported = [
-                key for key in list(kwargs.keys()) if key not in _ROW_SIGNATURE.parameters
-            ]
-            if unsupported:
-                for key in unsupported:
-                    removed = kwargs.pop(key)
-                    logger.warning(
-                        "Dropped unsupported gr.Row kwarg %s=%s to prevent TypeError",
-                        key,
-                        removed,
-                    )
+            kwargs = _sanitize_row_kwargs(kwargs)
 
         try:
             _ORIGINAL_ROW_INIT(self, *args, **kwargs)
@@ -337,22 +346,7 @@ def _create_row(**kwargs: Any) -> gr.Row:
     compatible with the current library contract.
     """
 
-    filtered_kwargs = dict(kwargs)
-
-    if "scale" in filtered_kwargs:
-        logger.warning(
-            "Removing unsupported 'scale' from gr.Row args: %s", filtered_kwargs
-        )
-        filtered_kwargs.pop("scale")
-
-    allowed_keys = set(_ROW_SIGNATURE.parameters.keys()) - {"self"}
-    dropped_keys = [key for key in list(filtered_kwargs.keys()) if key not in allowed_keys]
-    if dropped_keys:
-        for key in dropped_keys:
-            removed = filtered_kwargs.pop(key)
-            logger.warning(
-                "Discarded unsupported gr.Row kwarg %s=%s to maintain compatibility", key, removed
-            )
+    filtered_kwargs = _sanitize_row_kwargs(kwargs)
 
     logger.debug("Creating gr.Row with sanitized kwargs: %s", filtered_kwargs)
 
