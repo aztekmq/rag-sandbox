@@ -63,6 +63,12 @@ USER_PASS: Final[str] = os.getenv("USER_PASSWORD", "mquser2025")
 MODEL_PATH: Final[Path] = DEFAULT_MODEL_PATH
 MODEL_N_CTX: Final[int] = int(os.getenv("MODEL_N_CTX", 4096))
 MODEL_THREADS: Final[int] = int(os.getenv("MODEL_THREADS", 8))
+# Default to full GPU offload when available. Setting this to ``0`` forces a
+# CPU-only run, while a negative value instructs llama.cpp to try to place all
+# layers on the GPU. This aligns with the International Programming Standards by
+# making resource selection explicit and auditable through environment
+# variables.
+MODEL_N_GPU_LAYERS: Final[int] = int(os.getenv("MODEL_N_GPU_LAYERS", -1))
 # Explicitly disable Gradio tunneling by default to keep traffic local. Operators
 # can opt-in by setting SHARE_INTERFACE=true when internet access is permitted.
 SHARE_INTERFACE_REQUESTED: Final[bool] = (
