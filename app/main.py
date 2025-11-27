@@ -392,8 +392,8 @@ def build_app() -> gr.Blocks:
                     with _create_row(elem_classes=["header-left"], equal_height=True):
                         gr.Markdown("### MQ-RAG Assistant", elem_classes=["title-text"])
 
-                with _create_row(elem_classes=["badge-row", "header-meta"]):
-                    gr.Markdown("<span class='badge accent-badge'>Live</span>")
+                # with _create_row(elem_classes=["badge-row", "header-meta"]):
+                #     gr.Markdown("<span class='badge accent-badge'>Live</span>")
 
                 gr.Markdown("Welcome back, admin. Ask a question to search the knowledge base.")
 
