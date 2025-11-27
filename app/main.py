@@ -216,12 +216,6 @@ def start_new_conversation(state: AppState) -> Tuple[str, List[List[Any]], str, 
     return greeting, _default_sources(), DEFAULT_LOG_MESSAGE, "", state, "", sidebar_md
 
 
-def toggle_sidebar(current: bool) -> Tuple[bool, gr.Column]:
-    new_state = not current
-    logger.debug("Sidebar toggled to %s", new_state)
-    return new_state, gr.Column.update(visible=new_state)
-
-
 def switch_view(target: str, current: str) -> Tuple[str, gr.Column, gr.Column, gr.Column]:
     target = (target or "search").lower()
     resolved = "search" if target not in {"search", "docs", "help"} else target
@@ -266,7 +260,6 @@ def build_app() -> gr.Blocks:
         title="MQ-RAG Assistant",
     ) as demo:
         app_state = gr.State({"user": "admin", "session_id": "", "active_view": "search"})
-        sidebar_visible = gr.State(True)
         active_view_state = gr.State("search")
 
         # Main layout: Sidebar + Content
@@ -278,33 +271,20 @@ def build_app() -> gr.Blocks:
                 elem_classes=["nav-rail", "panel", "sidebar-card"],
             ) as sidebar_col:
                 gr.Markdown("## MQ-RAG\nOps Desk")
-                gr.Button("New Search", variant="primary", size="sm").click(
-                    start_new_conversation, app_state, outputs=None
-                )
+                new_search_btn = gr.Button("New Search", variant="primary", size="sm")
                 gr.Markdown("**Role:** Admin\n\n**Environment:** Sandbox")
                 gr.Markdown("### Navigation", elem_classes=["section-title"])
 
                 with _create_row(elem_classes=["nav-buttons"]):
-                    search_nav_btn = gr.Button("Search", size="sm")
-                    docs_nav_btn = gr.Button("Docs", size="sm")
+                    manage_docs_nav_btn = gr.Button("Manage Docs", size="sm")
                     help_nav_btn = gr.Button("Help", size="sm")
 
                 history_panel = gr.Markdown("*No turns yet.*", elem_classes=["history-panel"])
-                gr.Markdown(
-                    "---\n**Tip:** Toggle menu with ☰ for more space.",
-                    elem_classes=["sidebar-footer"],
-                )
 
             # === MAIN CONTENT ===
             with gr.Column(elem_classes=["main-area", "center-stage"]):
                 with _create_row(justify="between", elem_classes=["header-row"], equal_height=True):
                     with _create_row(elem_classes=["header-left"], equal_height=True):
-                        sidebar_toggle = gr.Button(
-                            "☰",
-                            size="sm",
-                            elem_classes=["toggle-icon", "sidebar-toggle"],
-                            variant="secondary",
-                        )
                         gr.Markdown("### MQ-RAG Assistant", elem_classes=["title-text"])
 
                 with _create_row(elem_classes=["badge-row", "header-meta"]):
@@ -315,7 +295,6 @@ def build_app() -> gr.Blocks:
 
                 # KPI Strip
                 with _create_row(elem_classes=["kpi-strip"]):
-                    gr.Markdown("#### Sessions\n0 active", elem_classes=["kpi-card"])
                     gr.Markdown("#### Docs Indexed\n2 indexed", elem_classes=["kpi-card"])
                     gr.Markdown("#### Latency\n< 5s", elem_classes=["kpi-card"])
                     gr.Markdown("#### Model\nArctic", elem_classes=["kpi-card"])
@@ -374,14 +353,19 @@ def build_app() -> gr.Blocks:
         # === Event Wiring ===
         outputs = [answer_panel, source_output, log_panel, raw_panel, app_state, query_input, history_panel]
 
-        sidebar_toggle.click(toggle_sidebar, sidebar_visible, [sidebar_visible, sidebar_col])
+        new_search_btn.click(start_new_conversation, app_state, outputs)
+        new_search_btn.click(
+            lambda cv: switch_view("search", cv),
+            active_view_state,
+            [active_view_state, search_panel, docs_panel, help_panel],
+        )
+
         search_btn.click(handle_query, [query_input, app_state], outputs)
         query_input.submit(handle_query, [query_input, app_state], outputs)
 
         # Navigation buttons (update visibility via switch_view)
         for btn_obj, view in [
-            (search_nav_btn, "search"),
-            (docs_nav_btn, "docs"),
+            (manage_docs_nav_btn, "docs"),
             (help_nav_btn, "help"),
         ]:
             btn_obj.click(
