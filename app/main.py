@@ -38,7 +38,10 @@ logger.setLevel(logging.DEBUG)
 # programming standards by documenting operational safeguards directly in code.
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 os.environ.setdefault("ORT_DEVICE_ALLOWLIST", "cpu")
-logger.debug("GPU execution disabled; using CPU-only ONNX providers")
+os.environ.setdefault("ORT_LOG_SEVERITY_LEVEL", "3")
+logger.debug(
+    "GPU execution disabled; using CPU-only ONNX providers and suppressing verbose ONNX warnings"
+)
 
 
 # ---------------------------------------------------------------------------
