@@ -13,7 +13,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Tuple
+from typing import Any, Dict, Generator, List, Tuple, TypedDict
 
 import gradio as gr
 
@@ -36,7 +36,8 @@ logger.debug("GPU execution disabled; forcing CPU-only ONNX Runtime")
 # ---------------------------------------------------------------------------
 # Gradio 4.x compatibility: safe Row creator (replaces deprecated 'scale')
 # ---------------------------------------------------------------------------
-_ROW_SIGNATURE = inspect.signature(gr.Row.__init__)
+_ORIGINAL_ROW = gr.Row
+_ROW_SIGNATURE = inspect.signature(_ORIGINAL_ROW.__init__)
 
 
 def _sanitize_row_kwargs(raw_kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -58,7 +59,27 @@ def _sanitize_row_kwargs(raw_kwargs: Dict[str, Any]) -> Dict[str, Any]:
 def _create_row(**kwargs: Any) -> gr.Row:
     """Create a gr.Row with Gradio 4+ compatibility (no 'scale' allowed)."""
     sanitized = _sanitize_row_kwargs(kwargs)
-    return gr.Row(**sanitized)
+    return _ORIGINAL_ROW(**sanitized)
+
+
+def _monkey_patch_row() -> None:
+    """Install a compatibility wrapper around ``gr.Row`` that strips ``scale``.
+
+    This protects legacy code paths that may still pass the deprecated ``scale``
+    parameter (or other unsupported kwargs) when running with Gradio ≥4.0. The
+    wrapper logs the sanitized arguments to preserve verbose diagnostics for
+    troubleshooting.
+    """
+
+    def _patched_row(*args: Any, **kwargs: Any) -> gr.Row:
+        sanitized = _sanitize_row_kwargs(kwargs)
+        return _ORIGINAL_ROW(*args, **sanitized)
+
+    gr.Row = _patched_row  # type: ignore[assignment]
+    logger.info("Applied Gradio Row compatibility shim (deprecated args stripped)")
+
+
+_monkey_patch_row()
 
 
 # ---------------------------------------------------------------------------
