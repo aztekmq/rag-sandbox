@@ -147,6 +147,15 @@ Run the Compose helper once all setup steps are complete:
 image pulls and build output verbose for easier debugging. The app listens on
 http://localhost:7860 once healthy.
 
+### Host time synchronization
+
+Docker Compose mounts `/etc/localtime` and `/etc/timezone` from the host into
+the container so clock settings and timezone data match exactly. This keeps
+timestamped DEBUG logs consistent across host and container. If your platform
+does not expose `/etc/timezone` (rare on some minimal distributions), set `TZ`
+in your `.env` to your host timezone (for example, `TZ=America/New_York`) before
+running `./launch.sh`.
+
 ### Login defaults
 - User mode → `user` / `mquser2025`
 - Admin mode → `admin` / your password
