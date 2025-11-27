@@ -282,15 +282,21 @@ def _summarize_library(documents: List[str]) -> Tuple[List[List[str]], str]:
     return rows, summary
 
 
-def open_manage_docs(current_view: str, documents: List[str]) -> Tuple[str, gr.Dataframe, str, gr.Column, gr.Column, gr.Column]:
-    """Switch to the Manage Docs panel and hydrate its table/summary content."""
+def open_manage_docs(current_view: str, documents: List[str]) -> Tuple[str, gr.Update, str, gr.Column, gr.Column, gr.Column]:
+    """Switch to the Manage Docs panel and hydrate its table/summary content.
+
+    Gradio 4.x does not expose a ``Dataframe.update`` helper, so we rely on the
+    generic ``gr.update`` utility to refresh the table rows. Additional debug
+    logging keeps the visibility transition traceable during troubleshooting.
+    """
 
     rows, summary = _summarize_library(documents)
     logger.info("Opening Manage Docs view from %s", current_view or "unknown")
+    logger.debug("Prepared %d document rows for Manage Docs view", len(rows))
     updated_view, search_visible, docs_visible, help_visible = switch_view("docs", current_view)
     return (
         updated_view,
-        gr.Dataframe.update(value=rows),
+        gr.update(value=rows),
         summary,
         search_visible,
         docs_visible,
@@ -298,12 +304,13 @@ def open_manage_docs(current_view: str, documents: List[str]) -> Tuple[str, gr.D
     )
 
 
-def refresh_manage_docs(current_view: str, documents: List[str]) -> Tuple[gr.Dataframe, str]:
+def refresh_manage_docs(current_view: str, documents: List[str]) -> Tuple[gr.Update, str]:
     """Refresh Manage Docs inventory without altering the current view selection."""
 
     rows, summary = _summarize_library(documents)
     logger.info("Refreshing Manage Docs table from %s", current_view or "unknown")
-    return gr.Dataframe.update(value=rows), summary
+    logger.debug("Refresh prepared %d row(s) for Manage Docs", len(rows))
+    return gr.update(value=rows), summary
 
 
 HELP_ENTRIES = [
