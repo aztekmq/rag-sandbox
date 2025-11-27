@@ -22,7 +22,14 @@ import chromadb
 from chromadb.config import Settings
 from llama_cpp import Llama
 
-from app.config import CHROMA_DIR, MODEL_N_CTX, MODEL_PATH, MODEL_THREADS, PDF_DIR
+from app.config import (
+    CHROMA_DIR,
+    MODEL_N_CTX,
+    MODEL_N_GPU_LAYERS,
+    MODEL_PATH,
+    MODEL_THREADS,
+    PDF_DIR,
+)
 from app.utils.embeddings import embed_documents, embed_query
 from app.utils.pdf_ingest import ingest_pdf_files
 
@@ -123,16 +130,65 @@ class RagEngine:
         self.collection = self.client.get_or_create_collection(
             name="ibm-mq-docs", metadata={"description": "IBM MQ reference"}
         )
-        self.llm = Llama(
-            model_path=str(model_path),
-            n_ctx=MODEL_N_CTX,
-            n_threads=MODEL_THREADS,
-            verbose=True,
-        )
+        self.llm = self._initialize_llm(model_path)
         self.prompt_eval_tps_history: list[float] = []
         self.decode_tps_history: list[float] = []
         self.retrieval_history: list[float] = []
         logger.info("RAG engine ready")
+
+    def _initialize_llm(self, model_path: Path) -> Llama:
+        """Create a Llama instance preferring GPU offload with CPU fallback.
+
+        Verbose logging reports each attempt so operators can diagnose failures
+        on hosts without GPU support or with incompatible builds. The helper
+        honors ``MODEL_N_GPU_LAYERS`` from configuration, which defaults to full
+        GPU offload (-1). When GPU initialization fails for any reason, the
+        method retries with ``n_gpu_layers=0`` to ensure inference remains
+        available on CPU-only systems.
+
+        Args:
+            model_path: Path to the GGUF model file to load.
+
+        Returns:
+            An initialized ``Llama`` instance using the best available hardware.
+        """
+
+        logger.info(
+            "Attempting GPU-accelerated Llama initialization with n_gpu_layers=%s",
+            MODEL_N_GPU_LAYERS,
+        )
+
+        try:
+            llm = Llama(
+                model_path=str(model_path),
+                n_ctx=MODEL_N_CTX,
+                n_threads=MODEL_THREADS,
+                n_gpu_layers=MODEL_N_GPU_LAYERS,
+                verbose=True,
+            )
+            logger.info(
+                "Llama ready with GPU preference using %d threads and n_gpu_layers=%s",
+                MODEL_THREADS,
+                MODEL_N_GPU_LAYERS,
+            )
+            return llm
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "GPU-accelerated initialization failed; falling back to CPU-only inference: %s",
+                exc,
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+
+        logger.debug("Retrying Llama initialization with CPU-only configuration")
+        llm = Llama(
+            model_path=str(model_path),
+            n_ctx=MODEL_N_CTX,
+            n_threads=MODEL_THREADS,
+            n_gpu_layers=0,
+            verbose=True,
+        )
+        logger.info("Llama initialized for CPU-only inference using %d threads", MODEL_THREADS)
+        return llm
 
     # ------------------------------------------------------------------
     # Throughput estimation helpers
