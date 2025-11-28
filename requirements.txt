@@ -5,3 +5,4 @@ chromadb==0.5.5
 pypdfium2>=4,<5
 sentence-transformers==3.0.1
 python-dotenv==1.0.1
+requests>=2.31.0

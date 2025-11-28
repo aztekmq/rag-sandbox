@@ -273,6 +273,25 @@ All steps follow verbose logging conventions so activities can be debugged easil
 - **Upload PDFs (Admin)**: Add IBM MQ PDFs via the left panel, then click **Re-index all PDFs**. Files are stored in `/app/data/pdfs`.
 - **Delete documents (Admin)**: Select a document from the dropdown and click **Delete selected** to remove its chunks from Chroma.
 - **Chat (User/Admin)**: Ask IBM MQ questions; responses come from local retrieval + llama.cpp generation.
+- **Run a standalone Ollama + Gradio test stack**: Use `scripts/run_ollama_docker.sh` to start a local Ollama container with verbose command tracing, then launch the dedicated Gradio bridge with `python tools/ollama_gradio.py --host 0.0.0.0 --port 7861`. Both components favor DEBUG-level logging so you can audit connectivity end-to-end.
+
+### Ollama + Gradio quickstart (local-only)
+These steps stand up a basic Ollama server in Docker and connect a dedicated Gradio UI to it for debugging purposes. The workflow mirrors the main app's verbosity so you can trace every call.
+
+1. **Start Ollama in Docker with verbose tracing**
+   ```bash
+   ./scripts/run_ollama_docker.sh
+   ```
+   The script uses `set -x` and explicit restart/volume flags. Logs remain available through `docker logs -f local-ollama`.
+
+2. **Launch the Gradio bridge against the Ollama API**
+   ```bash
+   python tools/ollama_gradio.py --host 0.0.0.0 --port 7861 --ollama-url http://localhost:11434 --model llama3
+   ```
+   You can also run `./scripts/run_ollama_stack.sh` to execute both steps sequentially with the same defaults.
+
+3. **Open the UI**
+   Navigate to `http://localhost:7861` and send prompts; streaming responses come directly from the Ollama model with DEBUG logs in the terminal.
 
 ## Logging and Observability
 - Logs are written to stdout and mirrored to `data/logs/app.log`; inspect with `docker logs mq-rag` or by reading the file from the mounted volume.
