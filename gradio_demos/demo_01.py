@@ -18,14 +18,11 @@ from pathlib import Path
 from typing import Iterable, List
 
 import chromadb
-from chromadb.utils import embedding_functions
 import gradio as gr
 import requests
 
 LOG_FORMAT = "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
-DEFAULT_EMBEDDING_MODEL_ID = os.getenv(
-    "EMBEDDING_MODEL_ID", "Snowflake/snowflake-arctic-embed-xs"
-)
+DEFAULT_EMBEDDING_MODEL_ID = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
 
 @dataclass
@@ -36,15 +33,72 @@ class Document:
     content: str
 
 
+class OllamaEmbeddingFunction:
+    """Minimal embedding adapter that delegates to a local Ollama instance."""
+
+    def __init__(self, base_url: str, model: str, timeout: int = 120) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.debug(
+            "Initialized embedding function | base_url=%s | model=%s | timeout=%ss",
+            self.base_url,
+            self.model,
+            self.timeout,
+        )
+
+    def __call__(self, texts: Iterable[str]) -> List[List[float]]:
+        """Return embeddings for the provided texts via the Ollama HTTP API."""
+
+        embeddings: List[List[float]] = []
+        for text in texts:
+            payload = {"model": self.model, "prompt": text}
+            self.logger.debug(
+                "Requesting embedding | url=%s/api/embeddings | model=%s | payload_length=%d",
+                self.base_url,
+                self.model,
+                len(text),
+            )
+
+            try:
+                response = requests.post(
+                    f"{self.base_url}/api/embeddings",
+                    json=payload,
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                content = response.json()
+                vector = content.get("embedding")
+
+                if not vector:
+                    raise ValueError("Ollama response missing 'embedding' field")
+
+                embeddings.append(vector)
+                self.logger.debug(
+                    "Received embedding with %d dimensions from Ollama", len(vector)
+                )
+            except (requests.RequestException, ValueError, json.JSONDecodeError) as exc:
+                self.logger.exception("Failed to retrieve embedding from Ollama: %s", exc)
+                raise
+
+        self.logger.info("Generated %d embeddings via Ollama", len(embeddings))
+        return embeddings
+
+
 class DemoRAG:
     """Small Retrieval-Augmented Generation helper built for demonstrations."""
 
-    def __init__(self, embedding_model_id: str) -> None:
+    def __init__(self, embedding_model_id: str, embedding_url: str) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.debug("Initializing DemoRAG with model '%s'", embedding_model_id)
+        self.logger.debug(
+            "Initializing DemoRAG with embedding model '%s' at '%s'",
+            embedding_model_id,
+            embedding_url,
+        )
         self.embedding_model_id = embedding_model_id
-        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=embedding_model_id, trust_remote_code=False
+        self.embedding_function = OllamaEmbeddingFunction(
+            base_url=embedding_url, model=embedding_model_id
         )
         self.client = chromadb.Client(chromadb.config.Settings(anonymized_telemetry=False))
         self.collection = self.client.create_collection(
@@ -138,7 +192,7 @@ def build_sample_documents() -> List[Document]:
             title="Architecture Overview",
             content=(
                 "The sandbox pairs a llama.cpp language model with a local Chroma vector store. "
-                "Embeddings rely on the Snowflake Arctic model to keep inference offline-first."
+                "Embeddings rely on the Ollama embedding endpoint to keep inference fully local."
             ),
         ),
         Document(
@@ -179,8 +233,8 @@ def parse_args() -> argparse.Namespace:
         dest="model",
         default=DEFAULT_EMBEDDING_MODEL_ID,
         help=(
-            "Sentence Transformer model identifier. Defaults to the Snowflake Arctic embedding model "
-            "to stay consistent with the main stack's offline behavior."
+            "Ollama embedding model to use for vectorization. Defaults to the Nomic embed model "
+            "to keep the pipeline fully local."
         ),
     )
     parser.add_argument(
@@ -201,6 +255,15 @@ def parse_args() -> argparse.Namespace:
         dest="ollama_model",
         default=os.getenv("OLLAMA_MODEL", "llama3"),
         help="Ollama model identifier to query (default: llama3).",
+    )
+    parser.add_argument(
+        "--embedding-url",
+        dest="embedding_url",
+        default=os.getenv("OLLAMA_EMBED_URL"),
+        help=(
+            "Base URL for the Ollama embedding endpoint. Defaults to the value of --ollama-url "
+            "when omitted."
+        ),
     )
     parser.add_argument(
         "--host",
@@ -327,7 +390,12 @@ def main() -> None:
     logger = logging.getLogger("demo_01")
     logger.debug("Starting demo with args: %s", args)
 
-    rag = DemoRAG(embedding_model_id=args.model)
+    embedding_url = args.embedding_url or args.ollama_url
+    logger.info(
+        "Using embedding configuration | url=%s | model=%s", embedding_url, args.model
+    )
+
+    rag = DemoRAG(embedding_model_id=args.model, embedding_url=embedding_url)
     rag.index_documents(build_sample_documents())
 
     ollama_config = OllamaConfig(base_url=args.ollama_url, model=args.ollama_model)

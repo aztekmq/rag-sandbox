@@ -3,6 +3,6 @@ llama-cpp-python==0.2.89
 chromadb==0.5.5
 # PyPDFium powers PDF ingestion without the Deep Search toolkit runtime burden.
 pypdfium2>=4,<5
-sentence-transformers==3.0.1
 python-dotenv==1.0.1
 requests>=2.31.0
+huggingface_hub>=0.23.0
