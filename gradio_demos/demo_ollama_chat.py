@@ -15,7 +15,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Iterable, List
-
+import os
+os.environ["GRADIO_ANALYTICS_ENABLED"] = "false"
 import gradio as gr
 import requests
 
@@ -125,15 +126,21 @@ def stream_ollama_chat(
         logger.exception("Streaming failure when contacting Ollama: %s", exc)
         yield f"[Error] Unable to contact Ollama at {config.base_url}: {exc}"
 
-
 def build_interface(config: OllamaChatConfig) -> gr.Blocks:
     """Construct the Gradio Blocks layout with an embedded ChatInterface."""
 
     logger = logging.getLogger("build_interface")
     logger.debug("Building Gradio interface for Ollama chat")
 
+    # This *is* the generator function that Gradio will call.
+    def chat_fn(message, history):
+        # Delegate the actual streaming to our helper, but make sure we yield
+        # the chunks so Gradio sees a streaming generator, not a generator object.
+        for chunk in stream_ollama_chat(message, history, config):
+            yield chunk
+
     chatbot = gr.ChatInterface(
-        lambda message, history: stream_ollama_chat(message, history, config),
+        fn=chat_fn,
         title="Ollama Chat Gateway",
         description=(
             "Stream messages to a locally running Ollama instance started via the "
@@ -141,25 +148,6 @@ def build_interface(config: OllamaChatConfig) -> gr.Blocks:
         ),
         analytics_enabled=False,
     )
-
-    with gr.Blocks() as demo:
-        gr.Markdown(
-            """
-            # Local Ollama Chat
-
-            This interface proxies user conversations to a Docker-hosted Ollama
-            server. Ensure the container is running (for example via
-            `scripts/run_ollama_docker.sh`) and that the configured URL is
-            reachable from this host. Verbose logging is enabled and written to
-            `data/logs/ollama_chat.log` for debugging.
-            """
-        )
-        chatbot.render()
-        gr.HTML("""<small>Verbose logging is enabled to simplify diagnostics.</small>""")
-
-    logger.info("Gradio Blocks application created successfully")
-    return demo
-
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments controlling the chat interface runtime."""
