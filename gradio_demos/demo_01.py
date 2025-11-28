@@ -10,6 +10,7 @@ international programming standards and auditability best practices.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import logging
 import os
@@ -18,8 +19,57 @@ from pathlib import Path
 from typing import Iterable, List
 
 import chromadb
-import gradio as gr
 import requests
+
+logger = logging.getLogger(__name__)
+
+
+def _ensure_huggingface_shim() -> None:
+    """Guarantee Gradio's optional Hugging Face hooks do not block local use.
+
+    Some Gradio versions import ``get_token`` and ``whoami`` from
+    ``huggingface_hub`` at module load time. Older hub releases omit these
+    helpers, which can cause an ImportError even when Hugging Face connectivity
+    is not required. To preserve a fully local Ollama workflow, we proactively
+    patch missing attributes with lightweight no-op shims.
+    """
+
+    try:
+        hf_hub = importlib.import_module("huggingface_hub")
+        shim_applied = False
+
+        if not hasattr(hf_hub, "get_token"):
+            shim_applied = True
+
+            def _noop_get_token(*_: object, **__: object) -> None:
+                logger.debug("huggingface_hub.get_token shimmed to a no-op")
+                return None
+
+            setattr(hf_hub, "get_token", _noop_get_token)
+
+        if not hasattr(hf_hub, "whoami"):
+            shim_applied = True
+
+            def _noop_whoami(*_: object, **__: object) -> dict:
+                logger.debug("huggingface_hub.whoami shimmed to a no-op")
+                return {}
+
+            setattr(hf_hub, "whoami", _noop_whoami)
+
+        if shim_applied:
+            logger.info(
+                "Applied Hugging Face compatibility shims; running Ollama demo fully locally"
+            )
+    except ModuleNotFoundError:
+        logger.info(
+            "huggingface_hub not installed; proceeding with local-only Ollama configuration"
+        )
+    except Exception as exc:  # pragma: no cover - defensive guard for unexpected import issues
+        logger.exception("Unexpected Hugging Face shim failure: %s", exc)
+
+
+_ensure_huggingface_shim()
+import gradio as gr
 
 LOG_FORMAT = "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
 DEFAULT_EMBEDDING_MODEL_ID = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
