@@ -16,13 +16,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Iterable, List
 import os
+
+# Disable Gradio analytics / HF telemetry
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "false"
+
 import gradio as gr
 import requests
 
 LOG_FORMAT = "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
-DEFAULT_OLLAMA_MODEL = "llama3"
+DEFAULT_OLLAMA_MODEL = "llama3"  # or "llama3.1" if that's what you're serving
 
 
 @dataclass
@@ -112,19 +115,35 @@ def stream_ollama_chat(
             response.raise_for_status()
             logger.debug("Ollama connection established; streaming tokens")
 
+            partial = ""  # accumulate full reply here
+
             for line in response.iter_lines():
                 if not line:
                     continue
 
                 data = json.loads(line.decode("utf-8"))
+
+                # Ollama usually sends a final record with done=true
+                if data.get("done"):
+                    break
+
                 token = data.get("message", {}).get("content", "")
 
                 if token:
-                    logger.debug("Received token chunk: %s", token)
-                    yield token
+                    partial += token
+                    logger.debug(
+                        "Received token chunk: %s | partial_len=%d",
+                        token,
+                        len(partial),
+                    )
+                    # IMPORTANT: yield the whole message-so-far,
+                    # not just the last tiny token
+                    yield partial
+
     except requests.RequestException as exc:  # pragma: no cover - network guard
         logger.exception("Streaming failure when contacting Ollama: %s", exc)
         yield f"[Error] Unable to contact Ollama at {config.base_url}: {exc}"
+
 
 def build_interface(config: OllamaChatConfig) -> gr.Blocks:
     """Construct the Gradio Blocks layout with an embedded ChatInterface."""
@@ -132,10 +151,9 @@ def build_interface(config: OllamaChatConfig) -> gr.Blocks:
     logger = logging.getLogger("build_interface")
     logger.debug("Building Gradio interface for Ollama chat")
 
-    # This *is* the generator function that Gradio will call.
+    # Gradio expects fn itself to be a generator function for streaming.
     def chat_fn(message, history):
-        # Delegate the actual streaming to our helper, but make sure we yield
-        # the chunks so Gradio sees a streaming generator, not a generator object.
+        # Delegate to our streaming helper and yield chunks
         for chunk in stream_ollama_chat(message, history, config):
             yield chunk
 
@@ -148,6 +166,9 @@ def build_interface(config: OllamaChatConfig) -> gr.Blocks:
         ),
         analytics_enabled=False,
     )
+
+    return chatbot
+
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments controlling the chat interface runtime."""
