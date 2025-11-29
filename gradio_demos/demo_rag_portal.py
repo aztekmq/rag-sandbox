@@ -29,6 +29,14 @@ import docx
 import gradio as gr
 import pypdfium2
 
+try:
+    import sentence_transformers  # noqa: F401
+except ImportError as exc:  # pragma: no cover - dependency guard
+    raise ImportError(
+        "sentence-transformers is required. Install with `pip install -r requirements.txt` "
+        "or `pip install sentence-transformers`."
+    ) from exc
+
 LOG_FORMAT = "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
 DEFAULT_DB_PATH = Path("data/rag_portal/chroma")
 DEFAULT_UPLOAD_PATH = Path("data/rag_portal/uploads")
