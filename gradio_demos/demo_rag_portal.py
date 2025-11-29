@@ -29,6 +29,53 @@ import docx
 import gradio as gr
 import pypdfium2
 
+# ---------------------------------------------------------------------------
+# Workaround for Gradio/gradio_client boolean-schema bugs in API info parsing
+# ---------------------------------------------------------------------------
+try:
+    from gradio_client import utils as grc_utils  # type: ignore[attr-defined]
+
+    _orig_get_type = getattr(grc_utils, "get_type", None)
+    _orig_inner_json_schema_to_python_type = getattr(
+        grc_utils, "_json_schema_to_python_type", None
+    )
+
+    if _orig_get_type is not None:
+
+        def _safe_get_type(schema):
+            """
+            Some Gradio versions pass bare booleans into get_type(), which used to
+            cause:
+                TypeError: argument of type 'bool' is not iterable
+            when get_type() checked for keys like "const" in the schema.
+            Treat True/False schemas as a generic "Any" type for API-info purposes.
+            """
+            if isinstance(schema, bool):
+                return "Any"
+            return _orig_get_type(schema)
+
+        grc_utils.get_type = _safe_get_type  # type: ignore[assignment]
+
+    if _orig_inner_json_schema_to_python_type is not None:
+
+        def _safe_inner_json_schema_to_python_type(schema, defs=None):
+            """
+            Inner converter used by json_schema_to_python_type. It can also receive
+            bare booleans via $ref/$defs plumbing. When that happens, short-circuit
+            to a generic "Any" type instead of raising APIInfoParseError.
+            """
+            if isinstance(schema, bool):
+                return "Any"
+            return _orig_inner_json_schema_to_python_type(schema, defs)
+
+        grc_utils._json_schema_to_python_type = _safe_inner_json_schema_to_python_type  # type: ignore[assignment]
+
+except Exception as patch_exc:  # pragma: no cover - defensive logging
+    logging.getLogger(__name__).warning(
+        "Failed to patch gradio_client schema utils: %s", patch_exc
+    )
+# ---------------------------------------------------------------------------
+
 try:
     import sentence_transformers  # noqa: F401
 except ImportError as exc:  # pragma: no cover - dependency guard
@@ -220,7 +267,7 @@ class RAGPortal:
                 self.logger.info("Ingestion complete | file=%s | chunks=%d", saved_path, chunks)
             except Exception as exc:  # pragma: no cover - defensive logging
                 self.logger.exception("Failed to ingest file: %s", file_path)
-                status_lines.append(f"{file_path.name}: failed -> {exc}")
+                status_lines.append(f"{file_path}: failed -> {exc}")
         return "\n".join(status_lines)
 
     def repository_table(self) -> list[list[str | float]]:
@@ -269,13 +316,12 @@ class RAGPortal:
         if not results:
             return "No documents are available yet. Please upload content first."
 
-        response_lines = [
-            "Top matches:",
-        ]
+        response_lines = ["Top matches:"]
         for idx, (doc, meta) in enumerate(results, start=1):
             snippet = doc[:240].strip()
             response_lines.append(
-                f"{idx}. {meta.get('source_file', 'unknown')} (chunk {meta.get('chunk_index', '?')}): {snippet}"
+                f"{idx}. {meta.get('source_file', 'unknown')} "
+                f"(chunk {meta.get('chunk_index', '?')}): {snippet}"
             )
         response_lines.append(
             "\nFor refined answers, continue asking follow-up questions after adding more documents."
@@ -287,6 +333,7 @@ class RAGPortal:
 
 
 # Interface construction ----------------------------------------------------
+
 
 def configure_logging(log_level: str) -> None:
     """Initialize console and file logging with verbose formatting."""
@@ -315,80 +362,223 @@ def configure_logging(log_level: str) -> None:
 
 
 def build_interface(portal: RAGPortal) -> gr.Blocks:
-    """Assemble the compact Gradio layout for document management and Q&A."""
+    """Assemble the Gradio layout with a landing menu and a dedicated
+    document management page that looks like a CRUD database interface.
+    """
 
     css = """
-    .portal-card {border: 1px solid #d6d6d6; border-radius: 10px; padding: 12px; background: #f7f8fa;}
+    .portal-card {
+        border: 1px solid #d6d6d6;
+        border-radius: 10px;
+        padding: 12px;
+        background: #f7f8fa;
+    }
     .compact-button {min-width: 160px;}
     .portal-header {font-size: 20px; font-weight: 600; margin-bottom: 8px; color: #1f3b73;}
+    .app-menu {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: #e9edf5;
+        border: 1px solid #d0d5e5;
+    }
+    .menu-title {
+        font-size: 18px;
+        font-weight: 600;
+        color: #1f3b73;
+    }
+    .menu-right {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    .menu-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: #4b5563;
+    }
     """
 
     with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue", neutral_hue="slate"), css=css) as demo:
+        # Top-level app title + description
         gr.Markdown(
-            "## Document Discovery Portal\nUpload, curate, and question your private library with responsive retrieval.",
+            "## Document Discovery Portal\n"
+            "Use the menu to switch between **Q&A** and **Document Management** views.",
             elem_classes=["portal-header"],
         )
 
-        with gr.Row(equal_height=True):
-            with gr.Column(scale=2, elem_classes=["portal-card"]):
-                gr.Markdown("### Upload & Index")
-                upload = gr.File(
-                    label="Drop PDF, DOCX, TXT, or Markdown files",
-                    file_count="multiple",
-                    file_types=[".pdf", ".docx", ".txt", ".md", ".markdown"],
-                )
-                ingest_button = gr.Button("Ingest Files", variant="primary", elem_classes=["compact-button"])
-                ingest_status = gr.Textbox(label="Ingestion log", lines=4)
-                ingest_button.click(
-                    fn=lambda files: portal.ingest_files(files or []),
-                    inputs=upload,
-                    outputs=ingest_status,
-                )
+        # Menu bar controlling which "page" is visible
+        with gr.Row(elem_classes=["app-menu"]):
+            with gr.Column(scale=3):
+                gr.Markdown("**Library Console**", elem_classes=["menu-title"])
+            with gr.Column(scale=1):
+                with gr.Row(elem_classes=["menu-right"]):
+                    gr.Markdown("**View:**", elem_classes=["menu-label"])
+                    view_selector = gr.Radio(
+                        choices=["Q&A", "Document Management"],
+                        value="Q&A",
+                        label="",
+                        interactive=True,
+                    )
 
-            with gr.Column(scale=1, elem_classes=["portal-card"]):
-                gr.Markdown("### Repository")
-                repo_table = gr.Dataframe(
-                    headers=["Name", "Type", "Size (KB)", "Updated"],
-                    datatype=["str", "str", "number", "str"],
-                    interactive=False,
-                    wrap=True,
-                )
-                refresh_btn = gr.Button("Refresh", elem_classes=["compact-button"])
-                delete_dropdown = gr.Dropdown(label="Select files to delete", multiselect=True, choices=[])
-                delete_btn = gr.Button("Delete Selected", variant="stop", elem_classes=["compact-button"])
-                delete_status = gr.Textbox(label="Repository updates", lines=2)
+        # ----------------------
+        # Q&A LANDING PAGE VIEW
+        # ----------------------
+        with gr.Column(visible=True) as qa_view:
+            gr.Markdown(
+                "### Ask the Library\n"
+                "Pose questions and receive retrieval-augmented responses from your indexed documents."
+            )
 
-                def refresh_repo() -> tuple[list[list[str | float]], list[str]]:
-                    table = portal.repository_table()
-                    choices = [row[0] for row in table]
-                    return table, choices
+            gr.ChatInterface(
+                fn=portal.answer_question,
+                title="Retrieval Chat",
+                description="Questions are answered using the most relevant document snippets.",
+                chatbot=gr.Chatbot(height=280, bubble_full_width=True),
+                textbox=gr.Textbox(
+                    placeholder="Ask about your uploaded documents",
+                    lines=2,
+                ),
+                submit_btn="Search",
+                analytics_enabled=False,
+            )
 
-                refresh_btn.click(fn=refresh_repo, inputs=None, outputs=[repo_table, delete_dropdown])
+        # ----------------------------------
+        # DOCUMENT MANAGEMENT / CRUD VIEW
+        # ----------------------------------
+        with gr.Column(visible=False) as doc_view:
+            gr.Markdown(
+                "### Document Management\n"
+                "Upload, inspect, and curate your repository like a CRUD database interface."
+            )
 
-                def delete_and_refresh(selected: list[str]):
-                    status = portal.delete_files(selected or [])
-                    table, choices = refresh_repo()
-                    return status, table, choices
+            with gr.Row(equal_height=True):
+                # LEFT: "Create / Ingest" panel
+                with gr.Column(scale=2, elem_classes=["portal-card"]):
+                    gr.Markdown("#### Create & Index Records")
+                    upload = gr.File(
+                        label="Drop PDF, DOCX, TXT, or Markdown files",
+                        file_count="multiple",
+                        file_types=[".pdf", ".docx", ".txt", ".md", ".markdown"],
+                    )
 
-                delete_btn.click(
-                    fn=delete_and_refresh,
-                    inputs=delete_dropdown,
-                    outputs=[delete_status, repo_table, delete_dropdown],
-                )
+                    with gr.Row():
+                        ingest_button = gr.Button(
+                            "Ingest Files (Create)",
+                            variant="primary",
+                            elem_classes=["compact-button"],
+                        )
+                        clear_upload_button = gr.Button(
+                            "Clear Selection",
+                            elem_classes=["compact-button"],
+                        )
 
-        gr.Markdown("### Ask the Library")
-        chat = gr.ChatInterface(
-            fn=portal.answer_question,
-            title="Retrieval Chat",
-            description="Questions are answered using the most relevant document snippets.",
-            chatbot=gr.Chatbot(height=280, bubble_full_width=True),
-            textbox=gr.Textbox(placeholder="Ask about your uploaded documents", lines=2),
-            submit_btn="Search",
-            analytics_enabled=False,
+                    ingest_status = gr.Textbox(
+                        label="Ingestion log (Create operations)",
+                        lines=4,
+                    )
+
+                    ingest_button.click(
+                        fn=lambda files: portal.ingest_files(files or []),
+                        inputs=upload,
+                        outputs=ingest_status,
+                    )
+                    clear_upload_button.click(
+                        fn=lambda: None,
+                        inputs=None,
+                        outputs=upload,
+                    )
+
+                # RIGHT: "Read / Update / Delete" panel
+                with gr.Column(scale=2, elem_classes=["portal-card"]):
+                    gr.Markdown("#### Repository Records (Read / Delete)")
+
+                    repo_table = gr.Dataframe(
+                        headers=["Name", "Type", "Size (KB)", "Updated"],
+                        datatype=["str", "str", "number", "str"],
+                        interactive=False,
+                        wrap=True,
+                        label="Current Records",
+                    )
+
+                    with gr.Row():
+                        refresh_btn = gr.Button(
+                            "Refresh Records",
+                            elem_classes=["compact-button"],
+                        )
+                        # Placeholder for "Update" in a CRUD-style toolbar (no-op currently)
+                        dummy_update_btn = gr.Button(
+                            "Update (N/A)",
+                            interactive=False,
+                            elem_classes=["compact-button"],
+                        )
+
+                    delete_dropdown = gr.Dropdown(
+                        label="Select records to delete",
+                        multiselect=True,
+                        choices=[],
+                    )
+
+                    delete_btn = gr.Button(
+                        "Delete Selected",
+                        variant="stop",
+                        elem_classes=["compact-button"],
+                    )
+                    delete_status = gr.Textbox(
+                        label="Repository updates (Delete operations)",
+                        lines=2,
+                    )
+
+                    # helpers for table + dropdown
+                    def _build_repo_state():
+                        table = portal.repository_table()
+                        names = [row[0] for row in table]
+                        dropdown_update = gr.update(choices=names, value=[])
+                        return table, dropdown_update
+
+                    refresh_btn.click(
+                        fn=_build_repo_state,
+                        inputs=None,
+                        outputs=[repo_table, delete_dropdown],
+                    )
+
+                    def delete_and_refresh(selected: list[str]):
+                        status = portal.delete_files(selected or [])
+                        table, dropdown_update = _build_repo_state()
+                        return status, table, dropdown_update
+
+                    delete_btn.click(
+                        fn=delete_and_refresh,
+                        inputs=delete_dropdown,
+                        outputs=[delete_status, repo_table, delete_dropdown],
+                    )
+
+        # -----------------------
+        # MENU VIEW SWITCH LOGIC
+        # -----------------------
+
+        def switch_view(choice: str):
+            """Toggle which page is visible based on the menu selection."""
+            if choice == "Q&A":
+                return gr.update(visible=True), gr.update(visible=False)
+            else:
+                return gr.update(visible=False), gr.update(visible=True)
+
+        view_selector.change(
+            fn=switch_view,
+            inputs=view_selector,
+            outputs=[qa_view, doc_view],
         )
 
-        demo.load(fn=lambda: portal.repository_table(), inputs=None, outputs=repo_table)
-        demo.load(fn=lambda: [row[0] for row in portal.repository_table()], inputs=None, outputs=delete_dropdown)
+        # Initial repository load for the Document Management view
+        demo.load(
+            fn=_build_repo_state,
+            inputs=None,
+            outputs=[repo_table, delete_dropdown],
+        )
 
     return demo
 
@@ -399,8 +589,19 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run a Gradio interface for uploading documents and querying them via retrieval.",
     )
-    parser.add_argument("--host", dest="host", default=DEFAULT_HOST, help="Server host (default: 0.0.0.0).")
-    parser.add_argument("--port", dest="port", type=int, default=DEFAULT_PORT, help="Server port (default: 7863).")
+    parser.add_argument(
+        "--host",
+        dest="host",
+        default=DEFAULT_HOST,
+        help="Server host (default: 0.0.0.0).",
+    )
+    parser.add_argument(
+        "--port",
+        dest="port",
+        type=int,
+        default=DEFAULT_PORT,
+        help="Server port (default: 7863).",
+    )
     parser.add_argument(
         "--log-level",
         dest="log_level",
@@ -432,7 +633,11 @@ def main(argv: Iterable[str] | None = None) -> None:
     portal = RAGPortal(config)
 
     interface = build_interface(portal)
-    interface.queue().launch(server_name=config.host, server_port=config.port, share=False)
+    interface.queue().launch(
+        server_name=config.host,
+        server_port=config.port,
+        share=False,
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
