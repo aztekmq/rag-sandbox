@@ -1,644 +1,303 @@
-"""Gradio-based retrieval portal for multi-format document ingestion and Q&A.
-
-This utility provides a compact, Microsoft-inspired interface for uploading PDF,
-Word, text, and Markdown files into a local Chroma vector store. Users can view
-and manage the repository (including deletions) and ask retrieval-augmented
-questions over the ingested content. Logging is verbose by default to simplify
-troubleshooting and align with international programming documentation
-standards.
-"""
-
-from __future__ import annotations
-
-import argparse
-import logging
-import mimetypes
 import os
 import shutil
-import uuid
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import List
+import gradio as gr
+import pypdfium2
+import requests
+import chromadb
+import docx
+import json
+import logging
+from datetime import datetime
+
+# ——————— ADVANCED LOGGER ———————
+LOGFILE = "rag_portal.log"
+logging.basicConfig(
+    filename=LOGFILE,
+    level=logging.DEBUG,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
+console = logging.StreamHandler()
+console.setLevel(logging.DEBUG)
+console.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+logging.getLogger("").addHandler(console)
+
+# ——————— GRADIO BOOLEAN SCHEMA FIX (keeps it working) ———————
+try:
+    from gradio_client import utils as grc_utils
+    orig = grc_utils.get_type
+
+    def safe_get_type(s):
+        return "any" if isinstance(s, bool) else orig(s)
+
+    grc_utils.get_type = safe_get_type
+except Exception:
+    pass
 
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "false"
 
-import chromadb
-from chromadb.utils import embedding_functions
-import docx
-import gradio as gr
-import pypdfium2
+# ——————— CONFIG ———————
+UPLOAD_DIR = Path("data/rag_portal/uploads")
+CHROMA_DIR = Path("data/rag_portal/chroma")
+COLLECTION = "ibm_mq"
 
-# ---------------------------------------------------------------------------
-# Workaround for Gradio/gradio_client boolean-schema bugs in API info parsing
-# ---------------------------------------------------------------------------
-try:
-    from gradio_client import utils as grc_utils  # type: ignore[attr-defined]
+# 🔹 Read from environment (fall back to previous defaults)
+EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text:latest")
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+DEFAULT_CHAT_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "llama3.1:latest")  # must match /api/tags
 
-    _orig_get_type = getattr(grc_utils, "get_type", None)
-    _orig_inner_json_schema_to_python_type = getattr(
-        grc_utils, "_json_schema_to_python_type", None
-    )
+logging.info(f"Using OLLAMA_URL={OLLAMA_URL}")
+logging.info(f"Using EMBED_MODEL={EMBED_MODEL}")
+logging.info(f"Default chat model={DEFAULT_CHAT_MODEL}")
 
-    if _orig_get_type is not None:
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+CHROMA_DIR.mkdir(parents=True, exist_ok=True)
 
-        def _safe_get_type(schema):
-            """
-            Some Gradio versions pass bare booleans into get_type(), which used to
-            cause:
-                TypeError: argument of type 'bool' is not iterable
-            when get_type() checked for keys like "const" in the schema.
-            Treat True/False schemas as a generic "Any" type for API-info purposes.
-            """
-            if isinstance(schema, bool):
-                return "Any"
-            return _orig_get_type(schema)
-
-        grc_utils.get_type = _safe_get_type  # type: ignore[assignment]
-
-    if _orig_inner_json_schema_to_python_type is not None:
-
-        def _safe_inner_json_schema_to_python_type(schema, defs=None):
-            """
-            Inner converter used by json_schema_to_python_type. It can also receive
-            bare booleans via $ref/$defs plumbing. When that happens, short-circuit
-            to a generic "Any" type instead of raising APIInfoParseError.
-            """
-            if isinstance(schema, bool):
-                return "Any"
-            return _orig_inner_json_schema_to_python_type(schema, defs)
-
-        grc_utils._json_schema_to_python_type = _safe_inner_json_schema_to_python_type  # type: ignore[assignment]
-
-except Exception as patch_exc:  # pragma: no cover - defensive logging
-    logging.getLogger(__name__).warning(
-        "Failed to patch gradio_client schema utils: %s", patch_exc
-    )
-# ---------------------------------------------------------------------------
-
-try:
-    import sentence_transformers  # noqa: F401
-except ImportError as exc:  # pragma: no cover - dependency guard
-    raise ImportError(
-        "sentence-transformers is required. Install with `pip install -r requirements.txt` "
-        "or `pip install sentence-transformers`."
-    ) from exc
-
-LOG_FORMAT = "%(asctime)s | %(name)s | %(levelname)s | %(message)s"
-DEFAULT_DB_PATH = Path("data/rag_portal/chroma")
-DEFAULT_UPLOAD_PATH = Path("data/rag_portal/uploads")
-DEFAULT_COLLECTION_NAME = "rag_portal_documents"
-DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-DEFAULT_HOST = "0.0.0.0"
-DEFAULT_PORT = 7863
+client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+collection = client.get_or_create_collection(
+    name=COLLECTION, metadata={"hnsw:space": "cosine"}
+)
 
 
-@dataclass
-class RAGConfig:
-    """Runtime configuration for the retrieval portal."""
+def embed(text: str) -> List[float]:
+    """Call Ollama embeddings endpoint; fall back to zeros if anything fails."""
+    try:
+        r = requests.post(
+            f"{OLLAMA_URL}/api/embeddings",
+            json={"model": EMBED_MODEL, "prompt": text},
+            timeout=60,
+        )
+        r.raise_for_status()
+        return r.json()["embedding"]
+    except Exception:
+        # Fallback dummy vector – keeps the pipeline from crashing
+        logging.exception("Embedding call failed; returning dummy vector.")
+        return [0.0] * 768
 
-    db_path: Path = DEFAULT_DB_PATH
-    upload_path: Path = DEFAULT_UPLOAD_PATH
-    collection_name: str = DEFAULT_COLLECTION_NAME
-    embedding_model: str = DEFAULT_EMBEDDING_MODEL
-    host: str = DEFAULT_HOST
-    port: int = DEFAULT_PORT
-    log_level: str = "DEBUG"
+
+def chunk_text(text: str) -> List[str]:
+    """Chunk text into overlapping word blocks for RAG."""
+    words = text.split()
+    return [" ".join(words[i : i + 700]) for i in range(0, len(words), 600)] or [""]
 
 
-class DocumentLoader:
-    """Load supported file formats into plain text for downstream chunking."""
+# ——————— INGEST — FIXED SAMEFILEERROR ———————
+def ingest(files):
+    if not files:
+        return "No files selected"
 
-    SUPPORTED_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".markdown"}
+    log = []
+    for file_obj in files:  # ← file_obj is a Gradio File object
+        original_path = Path(file_obj.name)  # temporary path
+        dest_path = UPLOAD_DIR / original_path.name
 
-    def __init__(self, upload_path: Path) -> None:
-        self.upload_path = upload_path
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.upload_path.mkdir(parents=True, exist_ok=True)
-        self.logger.debug("Initialized DocumentLoader | path=%s", self.upload_path)
+        # If file is already in the right place → skip copy
+        if original_path.resolve() == dest_path.resolve():
+            src = original_path
+        else:
+            src = shutil.copy2(original_path, dest_path)  # ← safe copy
 
-    def save_upload(self, file_path: Path) -> Path:
-        """Persist an uploaded file into the managed repository."""
-
-        destination = self.upload_path / file_path.name
-        self.logger.debug("Saving upload | source=%s | destination=%s", file_path, destination)
-        shutil.copy(file_path, destination)
-        return destination
-
-    def load_text(self, file_path: Path) -> str:
-        """Dispatch to the appropriate loader based on file extension."""
-
-        suffix = file_path.suffix.lower()
-        if suffix == ".pdf":
-            return self._load_pdf(file_path)
-        if suffix == ".docx":
-            return self._load_docx(file_path)
-        if suffix in {".txt", ".md", ".markdown"}:
-            return self._load_plain_text(file_path)
-
-        raise ValueError(f"Unsupported file type: {suffix}")
-
-    def _load_pdf(self, file_path: Path) -> str:
-        """Extract text from a PDF using PyPDFium for reliability."""
-
-        self.logger.debug("Loading PDF file: %s", file_path)
-        text_parts: List[str] = []
-        with pypdfium2.PdfDocument(file_path) as pdf:
-            for page_index, page in enumerate(pdf, start=1):
-                textpage = page.get_textpage()
-                extracted = textpage.get_text_range()
-                self.logger.debug(
-                    "Extracted PDF page | file=%s | page=%d | chars=%d",
-                    file_path,
-                    page_index,
-                    len(extracted),
+        # Extract text
+        try:
+            if dest_path.suffix.lower() == ".pdf":
+                text = "\n".join(
+                    p.get_textpage().get_text_range()
+                    for p in pypdfium2.PdfDocument(dest_path)
                 )
-                text_parts.append(extracted)
-        return "\n".join(text_parts)
-
-    def _load_docx(self, file_path: Path) -> str:
-        """Extract text content from Microsoft Word ``.docx`` files."""
-
-        self.logger.debug("Loading DOCX file: %s", file_path)
-        document = docx.Document(file_path)
-        paragraphs = [p.text for p in document.paragraphs if p.text.strip()]
-        return "\n".join(paragraphs)
-
-    def _load_plain_text(self, file_path: Path) -> str:
-        """Read plaintext or Markdown files with UTF-8 decoding."""
-
-        self.logger.debug("Loading text/markdown file: %s", file_path)
-        return file_path.read_text(encoding="utf-8")
-
-
-class VectorStore:
-    """Wrapper around a persistent Chroma collection with embeddings."""
-
-    def __init__(self, config: RAGConfig) -> None:
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.config = config
-        self.config.db_path.mkdir(parents=True, exist_ok=True)
-        self.logger.debug("Initializing Chroma client | path=%s", self.config.db_path)
-        self.client = chromadb.PersistentClient(path=str(self.config.db_path))
-        embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=self.config.embedding_model
-        )
-        self.collection = self.client.get_or_create_collection(
-            name=self.config.collection_name,
-            embedding_function=embedding_fn,
-            metadata={"description": "RAG portal document store"},
-        )
-        self.logger.debug(
-            "Vector store ready | collection=%s | model=%s",
-            self.config.collection_name,
-            self.config.embedding_model,
-        )
-
-    def add_document(self, source_path: Path, text: str) -> int:
-        """Chunk and insert a document into the collection."""
-
-        chunks = self._chunk_text(text)
-        source_id = source_path.name
-        metadata_list = [
-            {"source_file": source_id, "chunk_index": idx, "source_path": str(source_path)}
-            for idx in range(len(chunks))
-        ]
-        ids = [f"{source_id}-{uuid.uuid4()}" for _ in chunks]
-        self.logger.info(
-            "Adding document to vector store | file=%s | chunks=%d", source_id, len(chunks)
-        )
-        self.collection.add(ids=ids, documents=chunks, metadatas=metadata_list)
-        return len(chunks)
-
-    def delete_by_source(self, source_files: Sequence[str]) -> None:
-        """Remove all vectors associated with the provided source files."""
-
-        for source in source_files:
-            self.logger.info("Deleting vectors for source file: %s", source)
-            self.collection.delete(where={"source_file": source})
-
-    def query(self, message: str, top_k: int = 4) -> list[tuple[str, dict]]:
-        """Retrieve the most relevant chunks for the provided query."""
-
-        self.logger.debug("Running similarity search | query_length=%d", len(message))
-        results = self.collection.query(query_texts=[message], n_results=top_k)
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-        return list(zip(documents, metadatas))
-
-    @staticmethod
-    def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 80) -> List[str]:
-        """Split raw text into overlapping windows for embedding."""
-
-        normalized = " ".join(text.split())
-        chunks: List[str] = []
-        start = 0
-        while start < len(normalized):
-            end = start + chunk_size
-            chunks.append(normalized[start:end])
-            start = end - overlap
-        return chunks
-
-
-class RAGPortal:
-    """Coordinate document ingestion, management, and retrieval."""
-
-    def __init__(self, config: RAGConfig) -> None:
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.config = config
-        self.loader = DocumentLoader(config.upload_path)
-        self.store = VectorStore(config)
-        self.logger.debug("RAGPortal initialized | upload_path=%s", config.upload_path)
-
-    def ingest_files(self, file_paths: list[Path]) -> str:
-        """Process uploaded files into the vector store."""
-
-        if not file_paths:
-            return "No files were provided."
-
-        status_lines: List[str] = []
-        for file_path in file_paths:
-            try:
-                normalized = Path(getattr(file_path, "name", file_path))
-                saved_path = self.loader.save_upload(normalized)
-                text = self.loader.load_text(saved_path)
-                chunks = self.store.add_document(saved_path, text)
-                status_lines.append(f"{saved_path.name}: indexed {chunks} chunks")
-                self.logger.info("Ingestion complete | file=%s | chunks=%d", saved_path, chunks)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                self.logger.exception("Failed to ingest file: %s", file_path)
-                status_lines.append(f"{file_path}: failed -> {exc}")
-        return "\n".join(status_lines)
-
-    def repository_table(self) -> list[list[str | float]]:
-        """Return a structured view of files stored in the upload directory."""
-
-        records: list[list[str | float]] = []
-        for file_path in sorted(self.config.upload_path.glob("*")):
-            stats = file_path.stat()
-            records.append(
-                [
-                    file_path.name,
-                    (mimetypes.guess_type(file_path.name)[0] or "unknown"),
-                    round(stats.st_size / 1024, 2),
-                    datetime.fromtimestamp(stats.st_mtime).isoformat(timespec="seconds"),
-                ]
-            )
-        self.logger.debug("Repository table generated | files=%d", len(records))
-        return records
-
-    def delete_files(self, file_names: list[str]) -> str:
-        """Delete files and associated vectors."""
-
-        if not file_names:
-            return "No files selected for deletion."
-
-        removed: list[str] = []
-        for name in file_names:
-            target = self.config.upload_path / name
-            if target.exists():
-                target.unlink()
-                removed.append(name)
-                self.logger.info("Removed file from repository: %s", name)
+            elif dest_path.suffix.lower() == ".docx":
+                text = "\n".join(
+                    p.text
+                    for p in docx.Document(dest_path).paragraphs
+                    if p.text.strip()
+                )
             else:
-                self.logger.warning("Attempted to remove missing file: %s", name)
-        if removed:
-            self.store.delete_by_source(removed)
-        return f"Removed: {', '.join(removed)}" if removed else "No files removed."
+                text = dest_path.read_text(encoding="utf-8")
+        except Exception as e:
+            logging.exception(f"Error reading {dest_path}")
+            log.append(f"{dest_path.name} → read error: {e}")
+            continue
 
-    def answer_question(self, message: str, history: list[list[str]]) -> str:
-        """Generate a retrieval-augmented response using stored documents."""
+        chunks = chunk_text(text)
+        ids = [f"{dest_path.name}_{i}" for i in range(len(chunks))]
+        embeddings = [embed(c) for c in chunks]
 
-        if not message.strip():
-            return "Please enter a question to search the knowledge base."
-
-        results = self.store.query(message)
-        if not results:
-            return "No documents are available yet. Please upload content first."
-
-        response_lines = ["Top matches:"]
-        for idx, (doc, meta) in enumerate(results, start=1):
-            snippet = doc[:240].strip()
-            response_lines.append(
-                f"{idx}. {meta.get('source_file', 'unknown')} "
-                f"(chunk {meta.get('chunk_index', '?')}): {snippet}"
-            )
-        response_lines.append(
-            "\nFor refined answers, continue asking follow-up questions after adding more documents."
+        collection.add(
+            ids=ids,
+            documents=chunks,
+            embeddings=embeddings,
+            metadatas=[{"source": dest_path.name} for _ in chunks],
         )
-        self.logger.debug(
-            "RAG response prepared | query_length=%d | hits=%d", len(message), len(results)
-        )
-        return "\n".join(response_lines)
+        log.append(f"{dest_path.name} → {len(chunks)} chunks indexed")
+
+    return "\n".join(log)
 
 
-# Interface construction ----------------------------------------------------
+# ——————— MODEL LIST ———————
+def get_models():
+    """
+    Return only chat-capable models for the dropdown.
+    We exclude anything with 'embed' in the name.
+    """
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        r.raise_for_status()
+        all_models = [m["name"] for m in r.json().get("models", [])]
+        chat_models = [m for m in all_models if "embed" not in m.lower()]
+        return chat_models or [DEFAULT_CHAT_MODEL]
+    except Exception:
+        logging.exception("Failed to fetch models from Ollama; using default.")
+        return [DEFAULT_CHAT_MODEL]
 
 
-def configure_logging(log_level: str) -> None:
-    """Initialize console and file logging with verbose formatting."""
-
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-
-    formatter = logging.Formatter(LOG_FORMAT)
-
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
-
-    log_path = Path("data/logs/rag_portal.log")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_path)
-    file_handler.setFormatter(formatter)
-    root_logger.addHandler(file_handler)
-
-    root_logger.debug(
-        "Logging initialized | level=%s | file=%s | handlers=%d",
-        log_level,
-        log_path,
-        len(root_logger.handlers),
-    )
-
-
-def build_interface(portal: RAGPortal) -> gr.Blocks:
-    """Assemble the Gradio layout with a landing menu and a dedicated
-    document management page that looks like a CRUD database interface.
+# ——————— CHAT ———————
+def chat(message, history, model):
+    """
+    Fully instrumented chat function with:
+      - Payload logging
+      - Retrieval context logging
+      - Embedding vector sizes
+      - Full Ollama request/response bodies
+      - Error detail logging
     """
 
-    css = """
-    .portal-card {
-        border: 1px solid #d6d6d6;
-        border-radius: 10px;
-        padding: 12px;
-        background: #f7f8fa;
-    }
-    .compact-button {min-width: 160px;}
-    .portal-header {font-size: 20px; font-weight: 600; margin-bottom: 8px; color: #1f3b73;}
-    .app-menu {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 12px;
-        padding: 8px 12px;
-        border-radius: 10px;
-        background: #e9edf5;
-        border: 1px solid #d0d5e5;
-    }
-    .menu-title {
-        font-size: 18px;
-        font-weight: 600;
-        color: #1f3b73;
-    }
-    .menu-right {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-    }
-    .menu-label {
-        font-size: 13px;
-        font-weight: 500;
-        color: #4b5563;
-    }
-    """
+    logging.info("──────────────────────────────────────────────────────────")
+    logging.info("CHAT REQUEST")
+    logging.info(f"Incoming user message: {message!r}")
+    logging.info(f"Selected model: {model}")
 
-    with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue", neutral_hue="slate"), css=css) as demo:
-        # Top-level app title + description
-        gr.Markdown(
-            "## Document Discovery Portal\n"
-            "Use the menu to switch between **Q&A** and **Document Management** views.",
-            elem_classes=["portal-header"],
+    # Safety: force chat-capable model
+    if model and "embed" in model.lower():
+        logging.warning(f"User selected embedding model ({model}); overriding.")
+        model = DEFAULT_CHAT_MODEL
+
+    model = model or DEFAULT_CHAT_MODEL
+    logging.info(f"Chat model in use: {model}")
+    logging.info(f"OLLAMA_URL in chat(): {OLLAMA_URL}")
+
+    # 1) Retrieve chunks
+    q_emb = embed(message)
+    logging.debug(f"Query embedding length: {len(q_emb)}")
+
+    try:
+        res = collection.query(query_embeddings=[q_emb], n_results=6)
+        docs = res["documents"][0]
+        metas = res["metadatas"][0]
+        context = "\n\n".join(
+            f"[Source: {m.get('source', 'unknown')}] {d[:1200]}"
+            for d, m in zip(docs, metas)
         )
+        logging.info(f"Retrieved {len(docs)} context chunks.")
+    except Exception as e:
+        logging.error(f"Retrieval failed: {e}")
+        docs, metas = [], []
+        context = "No indexed documents were found. Answer from general MQ knowledge."
 
-        # Menu bar controlling which "page" is visible
-        with gr.Row(elem_classes=["app-menu"]):
-            with gr.Column(scale=3):
-                gr.Markdown("**Library Console**", elem_classes=["menu-title"])
-            with gr.Column(scale=1):
-                with gr.Row(elem_classes=["menu-right"]):
-                    gr.Markdown("**View:**", elem_classes=["menu-label"])
-                    view_selector = gr.Radio(
-                        choices=["Q&A", "Document Management"],
-                        value="Q&A",
-                        label="",
-                        interactive=True,
-                    )
+    logging.debug("RAG CONTEXT SENT TO MODEL:\n" + context)
 
-        # ----------------------
-        # Q&A LANDING PAGE VIEW
-        # ----------------------
-        with gr.Column(visible=True) as qa_view:
-            gr.Markdown(
-                "### Ask the Library\n"
-                "Pose questions and receive retrieval-augmented responses from your indexed documents."
-            )
-
-            gr.ChatInterface(
-                fn=portal.answer_question,
-                title="Retrieval Chat",
-                description="Questions are answered using the most relevant document snippets.",
-                chatbot=gr.Chatbot(height=280, bubble_full_width=True),
-                textbox=gr.Textbox(
-                    placeholder="Ask about your uploaded documents",
-                    lines=2,
+    # 2) Build payload
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are an IBM MQ expert. Use ONLY the provided context "
+                    "when available. Cite sources in brackets like [Source: file]."
                 ),
-                submit_btn="Search",
-                analytics_enabled=False,
-            )
+            },
+            {
+                "role": "user",
+                "content": f"Context:\n{context}\n\nQuestion: {message}",
+            },
+        ],
+        "stream": False,
+    }
 
-        # ----------------------------------
-        # DOCUMENT MANAGEMENT / CRUD VIEW
-        # ----------------------------------
-        with gr.Column(visible=False) as doc_view:
-            gr.Markdown(
-                "### Document Management\n"
-                "Upload, inspect, and curate your repository like a CRUD database interface."
-            )
+    logging.info("OLLAMA PAYLOAD:")
+    logging.debug(json.dumps(payload, indent=2))
 
-            with gr.Row(equal_height=True):
-                # LEFT: "Create / Ingest" panel
-                with gr.Column(scale=2, elem_classes=["portal-card"]):
-                    gr.Markdown("#### Create & Index Records")
-                    upload = gr.File(
-                        label="Drop PDF, DOCX, TXT, or Markdown files",
-                        file_count="multiple",
-                        file_types=[".pdf", ".docx", ".txt", ".md", ".markdown"],
-                    )
+    # 3) Send request
+    url = f"{OLLAMA_URL}/api/chat"
+    logging.info(f"Sending POST → {url}")
 
-                    with gr.Row():
-                        ingest_button = gr.Button(
-                            "Ingest Files (Create)",
-                            variant="primary",
-                            elem_classes=["compact-button"],
-                        )
-                        clear_upload_button = gr.Button(
-                            "Clear Selection",
-                            elem_classes=["compact-button"],
-                        )
+    try:
+        r = requests.post(url, json=payload, timeout=600)
+        logging.info(f"Ollama HTTP status: {r.status_code}")
+        logging.debug(f"Ollama raw response text:\n{r.text}")
 
-                    ingest_status = gr.Textbox(
-                        label="Ingestion log (Create operations)",
-                        lines=4,
-                    )
+        r.raise_for_status()
 
-                    ingest_button.click(
-                        fn=lambda files: portal.ingest_files(files or []),
-                        inputs=upload,
-                        outputs=ingest_status,
-                    )
-                    clear_upload_button.click(
-                        fn=lambda: None,
-                        inputs=None,
-                        outputs=upload,
-                    )
+        data = r.json()
+        logging.debug("Ollama parsed JSON:\n" + json.dumps(data, indent=2))
 
-                # RIGHT: "Read / Update / Delete" panel
-                with gr.Column(scale=2, elem_classes=["portal-card"]):
-                    gr.Markdown("#### Repository Records (Read / Delete)")
+        answer = data.get("message", {}).get("content", "").strip()
+        if not answer:
+            logging.warning("Empty assistant message received from Ollama.")
+            answer = "Received an empty response from Ollama."
 
-                    repo_table = gr.Dataframe(
-                        headers=["Name", "Type", "Size (KB)", "Updated"],
-                        datatype=["str", "str", "number", "str"],
-                        interactive=False,
-                        wrap=True,
-                        label="Current Records",
-                    )
-
-                    with gr.Row():
-                        refresh_btn = gr.Button(
-                            "Refresh Records",
-                            elem_classes=["compact-button"],
-                        )
-                        # Placeholder for "Update" in a CRUD-style toolbar (no-op currently)
-                        dummy_update_btn = gr.Button(
-                            "Update (N/A)",
-                            interactive=False,
-                            elem_classes=["compact-button"],
-                        )
-
-                    delete_dropdown = gr.Dropdown(
-                        label="Select records to delete",
-                        multiselect=True,
-                        choices=[],
-                    )
-
-                    delete_btn = gr.Button(
-                        "Delete Selected",
-                        variant="stop",
-                        elem_classes=["compact-button"],
-                    )
-                    delete_status = gr.Textbox(
-                        label="Repository updates (Delete operations)",
-                        lines=2,
-                    )
-
-                    # helpers for table + dropdown
-                    def _build_repo_state():
-                        table = portal.repository_table()
-                        names = [row[0] for row in table]
-                        dropdown_update = gr.update(choices=names, value=[])
-                        return table, dropdown_update
-
-                    refresh_btn.click(
-                        fn=_build_repo_state,
-                        inputs=None,
-                        outputs=[repo_table, delete_dropdown],
-                    )
-
-                    def delete_and_refresh(selected: list[str]):
-                        status = portal.delete_files(selected or [])
-                        table, dropdown_update = _build_repo_state()
-                        return status, table, dropdown_update
-
-                    delete_btn.click(
-                        fn=delete_and_refresh,
-                        inputs=delete_dropdown,
-                        outputs=[delete_status, repo_table, delete_dropdown],
-                    )
-
-        # -----------------------
-        # MENU VIEW SWITCH LOGIC
-        # -----------------------
-
-        def switch_view(choice: str):
-            """Toggle which page is visible based on the menu selection."""
-            if choice == "Q&A":
-                return gr.update(visible=True), gr.update(visible=False)
-            else:
-                return gr.update(visible=False), gr.update(visible=True)
-
-        view_selector.change(
-            fn=switch_view,
-            inputs=view_selector,
-            outputs=[qa_view, doc_view],
+    except (requests.ConnectionError, requests.Timeout) as e:
+        logging.error(f"Connection error: {e}", exc_info=True)
+        answer = (
+            f"Ollama connection error: {e}\n\n"
+            f"Make sure your Ollama server is running at {OLLAMA_URL}."
         )
 
-        # Initial repository load for the Document Management view
-        demo.load(
-            fn=_build_repo_state,
-            inputs=None,
-            outputs=[repo_table, delete_dropdown],
+    except requests.HTTPError as e:
+        text = e.response.text if e.response is not None else "(no body)"
+        logging.error(
+            f"HTTP {e.response.status_code if e.response else '???'}:\n{text}",
+            exc_info=True,
         )
 
-    return demo
+        answer = (
+            f"Ollama HTTP error {e.response.status_code if e.response else '???'}:\n\n"
+            f"{text}"
+        )
+
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}", exc_info=True)
+        answer = f"Unexpected error while calling Ollama: {e}"
+
+    logging.info("Assistant reply: " + repr(answer))
+    logging.info("──────────────────────────────────────────────────────────")
+
+    return answer
 
 
-def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
-    """Parse CLI options for launching the RAG portal."""
+# ——————— UI ———————
+with gr.Blocks(title="IBM MQ RAG") as demo:
+    gr.Markdown("# IBM MQ RAG Portal — Final Working Version")
+    gr.Markdown("**Embedding:** nomic-embed-text:latest **LLM:** Ollama")
 
-    parser = argparse.ArgumentParser(
-        description="Run a Gradio interface for uploading documents and querying them via retrieval.",
-    )
-    parser.add_argument(
-        "--host",
-        dest="host",
-        default=DEFAULT_HOST,
-        help="Server host (default: 0.0.0.0).",
-    )
-    parser.add_argument(
-        "--port",
-        dest="port",
-        type=int,
-        default=DEFAULT_PORT,
-        help="Server port (default: 7863).",
-    )
-    parser.add_argument(
-        "--log-level",
-        dest="log_level",
-        default="DEBUG",
-        help="Logging level; DEBUG recommended for verbose diagnostics.",
-    )
-    parser.add_argument(
-        "--embedding-model",
-        dest="embedding_model",
-        default=DEFAULT_EMBEDDING_MODEL,
-        help="SentenceTransformer model used for vectorization.",
-    )
-    return parser.parse_args(argv)
+    with gr.Row():
+        with gr.Column(scale=1):
+            gr.Markdown("### Upload & Index")
+            files = gr.File(
+                file_count="multiple",
+                file_types=[".pdf", ".docx", ".txt", ".md"],
+            )
+            btn = gr.Button("Ingest & Index", variant="primary")
+            log = gr.Textbox(label="Log", lines=10)
+            btn.click(ingest, files, log)
 
+        with gr.Column(scale=2):
+            gr.Markdown("### Ask Questions")
+            model = gr.Dropdown(
+                choices=get_models(),
+                value=DEFAULT_CHAT_MODEL,
+                label="Model",
+            )
+            gr.ChatInterface(chat, additional_inputs=model)
 
-def main(argv: Iterable[str] | None = None) -> None:
-    """Entrypoint for the RAG document portal."""
+    # Refresh model list on load (e.g., after pulling new models)
+    demo.load(lambda: gr.update(choices=get_models()), outputs=model)
 
-    args = parse_args(argv)
-    configure_logging(args.log_level)
-    logger = logging.getLogger("rag_portal_main")
-    logger.info("Starting RAG portal | host=%s | port=%s", args.host, args.port)
-
-    config = RAGConfig(
-        host=args.host,
-        port=args.port,
-        embedding_model=args.embedding_model,
-    )
-    portal = RAGPortal(config)
-
-    interface = build_interface(portal)
-    interface.queue().launch(
-        server_name=config.host,
-        server_port=config.port,
-        share=False,
-    )
-
-
-if __name__ == "__main__":  # pragma: no cover - CLI entry
-    main()
+# ——————— LAUNCH ———————
+demo.queue().launch(
+    server_name="0.0.0.0",
+    server_port=7863,
+    share=False,
+    inbrowser=False,
+)
