@@ -120,6 +120,7 @@ The script uses a temporary `DOCKER_CONFIG` and `set -x` for traceable command l
 - Default `LOG_LEVEL=DEBUG` mirrors logs to stdout and `data/logs/app.log` for auditability.
 - `config.py` ensures required directories (PDFs, Chroma DB, logs, models) exist and initializes structured logging during startup.
 - Prewarm and ingestion routines emit progress, timing, and error details so you can trace activity per international scripting and programming standards.
+- **Ingestion audit script**: run `python tools/ingestion_audit.py data/pdfs` (replace with your PDF folder or individual files) to validate extraction, chunking, embedding, and retrieval end to end. The script writes verbose logs to `data/logs/ingestion_audit.log` and a JSON summary to `data/reports/ingestion_audit_report.json` so you can spot empty pages, missing text, or weak retrieval coverage before relying on the graph.
 
 ## Troubleshooting
 - **Import errors (e.g., `ModuleNotFoundError: No module named 'app'`)**: run as a module (`python -m app.main`) or use Docker to preserve the package context.
